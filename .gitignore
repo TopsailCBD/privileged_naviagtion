@@ -1,2 +1,4 @@
 datasets/
 logs/
+**/__pycache__
+*.pyc
