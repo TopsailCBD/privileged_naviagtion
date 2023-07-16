@@ -35,6 +35,8 @@ from scipy import interpolate
 from isaacgym import terrain_utils
 from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg
 
+from legged_gym.utils import navigation_terrains
+
 class Terrain:
     def __init__(self, cfg: LeggedRobotCfg.terrain, num_robots) -> None:
 
@@ -146,10 +148,13 @@ class Terrain:
             discrete_obstacles_height *= 10
             num_rectangles = 15
             rectangle_min_size = 0.3
-            rectangle_max_size = 1.
+            rectangle_max_size = 2.
             platform_size = 3.
-            terrain_utils.discrete_obstacles_terrain(terrain, discrete_obstacles_height, rectangle_min_size,
-                                                     rectangle_max_size, num_rectangles, platform_size)
+            wall_height = 3.
+            # terrain_utils.discrete_obstacles_terrain(terrain, discrete_obstacles_height, rectangle_min_size,
+            #                                          rectangle_max_size, num_rectangles, platform_size)
+            
+            navigation_terrains.box_terrain(terrain, discrete_obstacles_height, rectangle_min_size,rectangle_max_size, num_rectangles, wall_height)
         elif choice < self.proportions[5]:
             terrain_utils.stepping_stones_terrain(terrain, stone_size=stepping_stones_size,
                                                   stone_distance=stone_distance, max_height=0., platform_size=4.)

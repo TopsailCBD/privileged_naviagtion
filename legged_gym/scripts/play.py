@@ -47,13 +47,10 @@ import torch
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     
-    print('Config of env:')
-    print(env_cfg.terrain)
-    
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 25)
-    env_cfg.terrain.num_rows = 3
-    env_cfg.terrain.num_cols = 3
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 100)
+    env_cfg.terrain.num_rows = 10
+    env_cfg.terrain.num_cols = 10
     env_cfg.terrain.curriculum = False
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.randomize_friction = True
@@ -73,7 +70,8 @@ def play(args):
     env_cfg.commands.ranges.lin_vel_x = [-0.4, 0.4]
     env_cfg.commands.ranges.lin_vel_y = [-0.1, 0.1]
     env_cfg.commands.ranges.ang_vel_yaw = [-0.1, 0.1]
-
+        
+    
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
     _, _ = env.reset()
