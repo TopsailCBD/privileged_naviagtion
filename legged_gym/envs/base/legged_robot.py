@@ -507,7 +507,13 @@ class LeggedRobot(BaseTask):
         if self.custom_origins:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
-            self.root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device) # xy position within 1m of the center
+            # self.root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device) # xy position within 1m of the center
+            self.root_states[env_ids, :2] += torch_rand_float(-2., 2., (len(env_ids), 2), device=self.device) # xy position within 2m of the center
+            for env_id in env_ids:
+                while self._blocked_root_position(env_id, self.root_states[env_id, :3]):
+                    self.root_states[env_id, :3] = self.base_init_state[:3] + self.env_origins[env_id, :3]
+                    self.root_states[env_id, :2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
+            
         else:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
@@ -539,6 +545,32 @@ class LeggedRobot(BaseTask):
                                                      gymtorch.unwrap_tensor(self.root_states),
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
+    def _blocked_root_position(self, env_ids, pos):
+        """ Return whether the spawn point of the robot is blocked by terrain.
+        """
+        # print(self.terrain.height_field_raw.shape) # 820,820
+        # print(self.terrain.length_per_env_pixels, self.terrain.width_per_env_pixels) # 80,80
+        
+        i = env_ids // self.cfg.terrain.num_rows
+        j = env_ids % self.cfg.terrain.num_cols
+        
+        length_box = 10
+        width_box = 10
+        
+        center_x = int(pos[0]*10)
+        center_y = int(pos[1]*10)
+        
+        # map coordinate system
+        start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
+        end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
+        start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
+        end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
+        
+        # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
+        
+        return np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01
+        # return False
+    
     def _push_robots(self):
         """ Random pushes the robots. Emulates an impulse by setting a randomized base velocity. 
         """
@@ -858,7 +890,12 @@ class LeggedRobot(BaseTask):
             # create env instance
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
             pos = self.env_origins[i].clone()
-            pos[:2] += torch_rand_float(-1., 1., (2,1), device=self.device).squeeze(1)
+            pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
+            
+            while self._blocked_root_position(i,pos):
+                pos = self.env_origins[i].clone()
+                pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
+            
             start_pose.p = gymapi.Vec3(*pos)
                 
             rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
@@ -871,6 +908,9 @@ class LeggedRobot(BaseTask):
             self.gym.set_actor_rigid_body_properties(env_handle, anymal_handle, body_props, recomputeInertia=True)
             self.envs.append(env_handle)
             self.actor_handles.append(anymal_handle)
+            
+            print('Origin at',self.env_origins[i].cpu().numpy(),
+                  'pos is',start_pose.p)
 
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):
@@ -894,11 +934,18 @@ class LeggedRobot(BaseTask):
             # put robots at the origins defined by the terrain
             max_init_level = self.cfg.terrain.max_init_terrain_level
             if not self.cfg.terrain.curriculum: max_init_level = self.cfg.terrain.num_rows - 1
-            self.terrain_levels = torch.randint(0, max_init_level+1, (self.num_envs,), device=self.device)
+            # self.terrain_levels = torch.randint(0, max_init_level+1, (self.num_envs,), device=self.device)
+            
+            self.terrain_levels = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').reshape(self.cfg.terrain.num_rows,self.cfg.terrain.num_cols).T.reshape(-1).to(torch.long)
+            
             self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
             self.max_terrain_level = self.cfg.terrain.num_rows
             self.terrain_origins = torch.from_numpy(self.terrain.env_origins).to(self.device).to(torch.float)
-            self.env_origins[:] = self.terrain_origins[self.terrain_levels, self.terrain_types]
+            self.env_origins[:,:2] = self.terrain_origins[self.terrain_levels, self.terrain_types][:,:2]
+            # print("LeggedRobot.terrain_origins:")
+            # print(self.terrain_origins)
+            # print("LeggedRobot.env_origins:")
+            # print(self.env_origins)
         else:
             self.custom_origins = False
             self.env_origins = torch.zeros(self.num_envs, 3, device=self.device, requires_grad=False)

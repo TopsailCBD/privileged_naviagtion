@@ -46,7 +46,7 @@ class A1AMPCfg( LeggedRobotCfg ):
         amp_motion_files = MOTION_FILES
 
     class init_state( LeggedRobotCfg.init_state ):
-        pos = [0.0, 0.0, 0.42] # x,y,z [m]
+        pos = [0,0,0.42]# [0.0, 0.0, 0.42] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
             #raw pos
             # 'FL_hip_joint': 0.0,  # [rad]

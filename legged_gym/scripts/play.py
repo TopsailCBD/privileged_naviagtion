@@ -29,28 +29,28 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 
-import os
 import inspect
+import os
+
 currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
 parentdir = os.path.dirname(os.path.dirname(currentdir))
 os.sys.path.insert(0, parentdir)
-from legged_gym import LEGGED_GYM_ROOT_DIR
-
 import isaacgym
-from legged_gym.envs import *
-from legged_gym.utils import  get_args, export_policy_as_jit, task_registry, Logger
-
 import numpy as np
 import torch
+from legged_gym import LEGGED_GYM_ROOT_DIR
+from legged_gym.envs import *
+from legged_gym.utils import (Logger, export_policy_as_jit, get_args,
+                              task_registry)
 
 
 def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     
     # override some parameters for testing
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 100)
-    env_cfg.terrain.num_rows = 10
-    env_cfg.terrain.num_cols = 10
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 16)
+    env_cfg.terrain.num_rows = 4
+    env_cfg.terrain.num_cols = 4
     env_cfg.terrain.curriculum = False
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.randomize_friction = True
@@ -67,9 +67,14 @@ def play(args):
     # env_cfg.terrain.terrain_proportions = [0, 0, 0, 1.0, 0]
     env_cfg.terrain.terrain_proportions = [0, 0, 0.0, 0, 1.0]
     # env_cfg.terrain.terrain_proportions = [1.0, 0, 0, 0, 0, 0]
-    env_cfg.commands.ranges.lin_vel_x = [-0.4, 0.4]
-    env_cfg.commands.ranges.lin_vel_y = [-0.1, 0.1]
-    env_cfg.commands.ranges.ang_vel_yaw = [-0.1, 0.1]
+    
+    env_cfg.commands.ranges.lin_vel_x = [0, 0]
+    env_cfg.commands.ranges.lin_vel_y = [0, 0]
+    env_cfg.commands.ranges.ang_vel_yaw = [0, 0]
+    
+    # env_cfg.commands.ranges.lin_vel_x = [-0.4, 0.4]
+    # env_cfg.commands.ranges.lin_vel_y = [-0.1, 0.1]
+    # env_cfg.commands.ranges.ang_vel_yaw = [-0.1, 0.1]
         
     
     # prepare environment

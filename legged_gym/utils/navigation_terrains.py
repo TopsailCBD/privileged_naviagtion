@@ -58,6 +58,8 @@ def box_terrain(terrain, max_height, min_size, max_size, num_rects, wall_height)
     wall_height = int(wall_height / terrain.vertical_scale)
     min_size = int(min_size / terrain.horizontal_scale)
     max_size = int(max_size / terrain.horizontal_scale)
+    
+    num_rects = int(num_rects)
 
     (i, j) = terrain.height_field_raw.shape
     height_range = range(max_height // 4, max_height, 3)
@@ -85,14 +87,14 @@ def box_terrain(terrain, max_height, min_size, max_size, num_rects, wall_height)
     if door_wall_idx in [0,2]:
         door_start_j = np.random.choice(range(0, j-door_width, 4))
         if door_wall_idx == 0:
-            terrain.height_field_raw[:2,door_start_j:door_start_j+door_width] = 0
+            terrain.height_field_raw[:10,door_start_j:door_start_j+door_width] = 0
         elif door_wall_idx == 2:
-            terrain.height_field_raw[-2:,door_start_j:door_start_j+door_width] = 0
+            terrain.height_field_raw[-10:,door_start_j:door_start_j+door_width] = 0
     else:
         door_start_i = np.random.choice(range(0, i-door_width, 4))
         if door_wall_idx == 1:
-            terrain.height_field_raw[door_start_i:door_start_i+door_width,:2] = 0
+            terrain.height_field_raw[door_start_i:door_start_i+door_width,:10] = 0
         elif door_wall_idx == 3:
-            terrain.height_field_raw[door_start_i:door_start_i+door_width,-2:] = 0
+            terrain.height_field_raw[door_start_i:door_start_i+door_width,-10:] = 0
         
     return terrain

@@ -145,8 +145,8 @@ class Terrain:
                 step_height *= -1
             terrain_utils.pyramid_stairs_terrain(terrain, step_width=0.31, step_height=step_height, platform_size=3.)
         elif choice < self.proportions[4]:
-            discrete_obstacles_height *= 10
-            num_rectangles = 15
+            discrete_obstacles_height = 2
+            num_rectangles = 2 + 15*difficulty
             rectangle_min_size = 0.3
             rectangle_max_size = 2.
             platform_size = 3.
@@ -213,8 +213,14 @@ class Terrain:
         end_y = self.border + (j + 1) * self.width_per_env_pixels
         self.height_field_raw[start_x: end_x, start_y:end_y] = terrain.height_field_raw
 
+        # print("start_x, end_x, start_y, end_y")
+        # print(start_x,end_x,start_y,end_y)
+        
         env_origin_x = (i + 0.5) * self.env_length
         env_origin_y = (j + 0.5) * self.env_width
+        
+        # print(i,j,env_origin_x,env_origin_y)
+        
         x1 = int((self.env_length/2. - 1) / terrain.horizontal_scale)
         x2 = int((self.env_length/2. + 1) / terrain.horizontal_scale)
         y1 = int((self.env_width/2. - 1) / terrain.horizontal_scale)
