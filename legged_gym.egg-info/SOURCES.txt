@@ -11,7 +11,7 @@ legged_gym/envs/__init__.py
 legged_gym/utils/__init__.py
 legged_gym/utils/helpers.py
 legged_gym/utils/logger.py
-legged_gym/utils/math.py
+legged_gym/utils/math_utils.py
 legged_gym/utils/task_registry.py
 legged_gym/utils/terrain.py
 rsl_rl/__init__.py
