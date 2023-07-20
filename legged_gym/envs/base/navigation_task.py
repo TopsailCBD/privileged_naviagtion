@@ -45,9 +45,11 @@ from legged_gym import LEGGED_GYM_ROOT_DIR
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.terrain import Terrain
 from legged_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
-from legged_gym.utils.helpers import class_to_dict
+from legged_gym.utils.helpers import class_to_dict, get_load_path
+from legged_gym.utils.task_registry import task_registry
 from .navigation_config import NavigationCfg
 from rsl_rl.datasets.motion_loader import AMPLoader
+from rsl_rl.modules.actor_critic import ActorCritic
 
 
 COM_OFFSET = torch.tensor([0.012731, 0.002186, 0.000515])
@@ -82,6 +84,7 @@ class NavigationTask(BaseTask):
 
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
+        self._init_locomotion_model()
         self._init_buffers()
         self._prepare_reward_function()
         self.init_done = True
@@ -99,12 +102,19 @@ class NavigationTask(BaseTask):
         obs, privileged_obs, _, _, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         return obs, privileged_obs
 
-    def step(self, actions):
-        """ Apply actions, simulate, call self.post_physics_step()
+    def step(self, commands):
+        """ Calculate actions by command, apply actions, simulate, 
+        call self.pre_physics_step()
+        call self.post_physics_step()
 
         Args:
             actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
         """
+        # Navigation Task: actions is speed command
+        self.commands = commands
+        # Calculate speed actions from commands
+        actions = self.pre_physics_step()
+        
         clip_actions = self.cfg.normalization.clip_actions
         self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
         # step physics and render each frame
@@ -139,6 +149,30 @@ class NavigationTask(BaseTask):
             policy_obs = self.obs_buf
         return policy_obs
 
+    def pre_physics_step(self):
+        """ check commands and state, compute actions
+        
+        """
+        self.base_quat[:] = self.root_states[:, 3:7]
+        self.base_lin_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
+        self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
+        self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
+        
+        self.compute_locomotion_observations()
+        actions = self.locomotion_policy(self.locomotion_obs_buf)
+        
+        return actions
+    
+    def compute_locomotion_observations(self):
+        self.locomotion_obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
+                                    self.base_ang_vel  * self.obs_scales.ang_vel,
+                                    self.projected_gravity,
+                                    self.commands[:, :3] * self.commands_scale,
+                                    (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
+                                    self.dof_vel * self.obs_scales.dof_vel,
+                                    self.actions
+                                    ),dim=-1)
+        
     def post_physics_step(self):
         """ check terminations, compute observations and rewards
             calls self._post_physics_step_callback() for common computations 
@@ -262,6 +296,7 @@ class NavigationTask(BaseTask):
     def compute_observations(self):
         """ Computes observations
         """
+        # Navigation Task: Change if need
         self.privileged_obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
@@ -292,17 +327,15 @@ class NavigationTask(BaseTask):
     # 局部height map (measure_points)
     # 速度: base_lin_vel, ang_vel
     # 关节速度？: dof_pos, dof_vel
+    
     def get_navigation_observations(self):
-        pass
-
-    def get_full_navigation_observations(self):
-        pass
-    
-    def _reset_dofs_navigation(self):
-        pass
-    
-    def _reset_root_states_navigation(self):
-        pass
+        base_lin_vel = self.base_lin_vel
+        base_ang_vel = self.base_ang_vel
+        joint_vel = self.dof_vel
+        # 可以把clip限制解除，real中可以直接得到
+        # heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
+        heights = self.root_statesp[:, 2].unsqueeze(1) * self.obs_scales.height_measurements
+        return torch.cat((base_lin_vel, base_ang_vel, joint_vel, heights), dim=-1)
 
     def get_amp_observations(self):
         joint_pos = self.dof_pos
@@ -350,6 +383,50 @@ class NavigationTask(BaseTask):
         self.gym.viewer_camera_look_at(self.viewer, None, cam_pos, cam_target)
 
     #------------- Callbacks --------------
+    def _init_locomotion_model(self):
+        """ Load locomotion model from cfg. We only need actor part of ActorCritic.
+            Refer to play.py
+        """
+        # set path to load model
+        train_cfg_class = eval(self.cfg.locomotion.train_cfg_class)
+        self.train_cfg = train_cfg_class()
+        self.train_cfg.runner.resume = True
+        self.train_cfg.runner.load_run = self.cfg.locomotion.load_run
+        self.train_cfg.runner.checkpoint = self.cfg.locomotion.checkpoint
+        # load previously trained model
+        resume_path = get_load_path(
+                                    log_root=os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', self.train_cfg.runner.experiment_name), 
+                                    load_run=self.train_cfg.runner.load_run, 
+                                    checkpoint=self.train_cfg.runner.checkpoint
+                                    )
+
+        # Imitate rsl_rl.runners.OnPolicyRunners.__init__
+        actor_critic_class = eval(self.train_cfg.runner.policy_class_name) # ActorCritic
+        if self.cfg.locomotion.num_privileged_obs is not None:
+            num_critic_obs = self.cfg.locomotion.num_privileged_obs 
+        else:
+            num_critic_obs = self.cfg.locomotion.num_obs
+        self.locomotion_actor_critic: ActorCritic = actor_critic_class( self.cfg.locomotion.num_obs,
+                                                        num_critic_obs,
+                                                        self.cfg.locomotion.num_actions,
+                                                        **self.train_cfg.policy).to(self.device)
+        print(f"Loading model from: {resume_path}")
+        loaded_dict = torch.load(resume_path)
+        
+        self.locomotion_actor_critic.load_state_dict(loaded_dict['model_state_dict'])
+        # self.alg.optimizer.load_state_dict(loaded_dict['optimizer_state_dict']) # need self.alg: PPO
+        # self.current_learning_iteration = loaded_dict['iter']
+        
+        # Imitate rsl_rl.runners.OnPolicyRunners.get_inference_policy
+        self.locomotion_policy = self.locomotion_actor_critic.act_inference
+    
+        """
+        Tips: In ActorCritic:
+        def act_inference(self, observations):
+            actions_mean = self.actor(observations)
+            return actions_mean
+        """
+    
     def _process_rigid_shape_props(self, props, env_id):
         """ Callback allowing to store/change/randomize the rigid shape properties of each environment.
             Called During environment creation.
@@ -420,9 +497,9 @@ class NavigationTask(BaseTask):
         """ Callback called before computing terminations, rewards, and observations
             Default behaviour: Compute ang vel command based on target and heading, compute measured terrain heights and randomly push robots
         """
-        # 
-        env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
-        self._resample_commands(env_ids)
+        # Navigation Task：Do not resample commands here.
+        # env_ids = (self.episode_length_buf % int(self.cfg.commands.resampling_time / self.dt)==0).nonzero(as_tuple=False).flatten()
+        # self._resample_commands(env_ids)
         if self.cfg.commands.heading_command:
             forward = quat_apply(self.base_quat, self.forward_vec)
             heading = torch.atan2(forward[:, 1], forward[:, 0])
@@ -481,6 +558,7 @@ class NavigationTask(BaseTask):
             raise NameError(f"Unknown controller type: {control_type}")
         return torch.clip(torques, -self.torque_limits, self.torque_limits)
 
+    # Navigation Task: 不需要用dof，暂不修改
     def _reset_dofs(self, env_ids):
         """ Resets DOF position and velocities of selected environmments
         Positions are randomly selected within 0.5:1.5 x default positions.
@@ -497,6 +575,7 @@ class NavigationTask(BaseTask):
                                               gymtorch.unwrap_tensor(self.dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
+    # Navigation Task: 不需要用dof，暂不修改
     def _reset_dofs_amp(self, env_ids, frames):
         """ Resets DOF position and velocities of selected environmments
         Positions are randomly selected within 0.5:1.5 x default positions.
@@ -513,6 +592,8 @@ class NavigationTask(BaseTask):
                                               gymtorch.unwrap_tensor(self.dof_state),
                                               gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
+    # Navigation Task: state应包含height map?
+    # height map 独立出来了
     def _reset_root_states(self, env_ids):
         """ Resets ROOT states position and velocities of selected environmments
             Sets base position based on the curriculum
@@ -595,6 +676,7 @@ class NavigationTask(BaseTask):
         self.root_states[:, 7:9] = torch_rand_float(-max_vel, max_vel, (self.num_envs, 2), device=self.device) # lin vel x/y
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
+    # Navigation Task: 修改以下两个函数: 初始化环境的方式不同
     def _update_terrain_curriculum(self, env_ids):
         """ Implements the game-inspired curriculum.
 
