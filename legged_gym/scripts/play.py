@@ -72,9 +72,9 @@ def play(args):
     env_cfg.commands.ranges.lin_vel_y = [0, 0]
     env_cfg.commands.ranges.ang_vel_yaw = [0, 0]
     
-    # env_cfg.commands.ranges.lin_vel_x = [-0.4, 0.4]
-    # env_cfg.commands.ranges.lin_vel_y = [-0.1, 0.1]
-    # env_cfg.commands.ranges.ang_vel_yaw = [-0.1, 0.1]
+    # env_cfg.commands.ranges.lin_vel_x = [-3, 3]
+    # env_cfg.commands.ranges.lin_vel_y = [-1, 1]
+    # env_cfg.commands.ranges.ang_vel_yaw = [-1, 1]
         
     
     # prepare environment

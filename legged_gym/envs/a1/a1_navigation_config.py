@@ -38,13 +38,13 @@ class A1NavigationCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         num_envs = 4096
         include_history_steps = None  # Number of steps of history to include.
-        num_observations = 48 #+ 11 * 17
-        num_privileged_obs = 48 #+ 11 * 17
+        num_observations = 235
+        num_privileged_obs = 235
         reference_state_initialization = False
         reference_state_initialization_prob = 0.85
 
     class locomotion:
-        train_cfg_class_name = 'LeggedRobotCfgPPO'
+        train_cfg_class_name = 'A1NavigationCfgPPO'
         num_privileged_obs = None
         num_observations = 235
         num_actions = 12

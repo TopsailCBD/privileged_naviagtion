@@ -26,8 +26,10 @@ class MazeSolver(AStar):
         return math.hypot(x2 - x1, y2 - y1)
 
     def distance_between(self, n1, n2):
-        """this method always returns 1, as two 'neighbors' are always adajcent"""
-        return 1
+        """this method returns cost of moving between two adjacent 'neighbors'"""
+        x1, y1 = n1
+        x2, y2 = n2
+        return math.hypot(x2 - x1, y2 - y1)
 
     def neighbors(self, node):
         """ for a given coordinate in the maze, returns up to 4 adjacent(north,east,south,west)

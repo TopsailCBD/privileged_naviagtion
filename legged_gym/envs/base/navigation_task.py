@@ -50,6 +50,7 @@ from rsl_rl.modules.actor_critic import ActorCritic
 from torch import Tensor
 
 from .legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
+from ..a1.a1_navigation_config import A1NavigationCfg, A1NavigationCfgPPO
 
 COM_OFFSET = torch.tensor([0.012731, 0.002186, 0.000515])
 HIP_OFFSETS = torch.tensor([
@@ -60,7 +61,7 @@ HIP_OFFSETS = torch.tensor([
 
 
 class NavigationTask(BaseTask):
-    def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
+    def __init__(self, cfg: A1NavigationCfg, sim_params, physics_engine, sim_device, headless):
         """ Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
             initilizes pytorch buffers used during training
@@ -101,6 +102,7 @@ class NavigationTask(BaseTask):
         obs, privileged_obs, _, _, _, _, _ = self.step(torch.zeros(self.num_envs, self.num_actions, device=self.device, requires_grad=False))
         return obs, privileged_obs
 
+    # def step(self, actions)
     def step(self, commands):
         """ Calculate actions by command, apply actions, simulate, 
         call self.pre_physics_step()
@@ -344,9 +346,9 @@ class NavigationTask(BaseTask):
             if foundPath:
                 self.navigation_path[i] = list(foundPath)
             else:
-                self.navigation_path = None
+                self.navigation_path[i] = None
             
-        print(self.navigation_path)
+        # print(self.navigation_path)
         
 
     def get_amp_observations(self):
@@ -407,7 +409,7 @@ class NavigationTask(BaseTask):
         self.train_cfg.runner.checkpoint = self.cfg.locomotion.checkpoint
         # load previously trained model
         resume_path = get_load_path(
-                                    log_root=os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', self.train_cfg.runner.experiment_name), 
+                                    root=os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', self.train_cfg.runner.experiment_name), 
                                     load_run=self.train_cfg.runner.load_run, 
                                     checkpoint=self.train_cfg.runner.checkpoint
                                     )
@@ -417,8 +419,8 @@ class NavigationTask(BaseTask):
         if self.cfg.locomotion.num_privileged_obs is not None:
             num_critic_obs = self.cfg.locomotion.num_privileged_obs 
         else:
-            num_critic_obs = self.cfg.locomotion.num_obs
-        self.locomotion_actor_critic: ActorCritic = actor_critic_class( self.cfg.locomotion.num_obs,
+            num_critic_obs = self.cfg.locomotion.num_observations
+        self.locomotion_actor_critic: ActorCritic = actor_critic_class( self.cfg.locomotion.num_observations,
                                                         num_critic_obs,
                                                         self.cfg.locomotion.num_actions,
                                                         **self.train_cfg.policy).to(self.device)
@@ -1180,6 +1182,13 @@ class NavigationTask(BaseTask):
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
 
     #------------ reward functions----------------
+    
+    def _reward_behaviour(self):
+        return torch.sqrt(self.command - self.teacher_command, dim = 1)
+    
+    # def _reward_success(self):
+        # return torch.sqrt(self.cur_pos - self.task_goals, dim = 1) < epsilon
+    
     def _reward_lin_vel_z(self):
         # Penalize z axis base linear velocity
         return torch.square(self.base_lin_vel[:, 2])
