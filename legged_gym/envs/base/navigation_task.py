@@ -28,29 +28,28 @@
 #
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
-from legged_gym import LEGGED_GYM_ROOT_DIR, envs
-from time import time
-from warnings import WarningMessage
-import numpy as np
 import os
+from time import time
+from typing import Dict, Tuple
+from warnings import WarningMessage
 
-from isaacgym.torch_utils import *
-from isaacgym import gymtorch, gymapi, gymutil
-
+import numpy as np
 import torch
-from torch import Tensor
-from typing import Tuple, Dict
-
-from legged_gym import LEGGED_GYM_ROOT_DIR
+from isaacgym import gymapi, gymtorch, gymutil
+from isaacgym.torch_utils import *
+from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from legged_gym.envs.base.base_task import BaseTask
-from legged_gym.utils.terrain import Terrain
-from legged_gym.utils.math_utils import quat_apply_yaw, wrap_to_pi, torch_rand_sqrt_float
 from legged_gym.utils.helpers import class_to_dict, get_load_path
+from legged_gym.utils.math_utils import (quat_apply_yaw, torch_rand_sqrt_float,
+                                         wrap_to_pi)
+from legged_gym.utils.maze_solver import MazeSolver
 from legged_gym.utils.task_registry import task_registry
-from .navigation_config import NavigationCfg
+from legged_gym.utils.terrain import Terrain
 from rsl_rl.datasets.motion_loader import AMPLoader
 from rsl_rl.modules.actor_critic import ActorCritic
+from torch import Tensor
 
+from .legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
 COM_OFFSET = torch.tensor([0.012731, 0.002186, 0.000515])
 HIP_OFFSETS = torch.tensor([
@@ -61,7 +60,7 @@ HIP_OFFSETS = torch.tensor([
 
 
 class NavigationTask(BaseTask):
-    def __init__(self, cfg: NavigationCfg, sim_params, physics_engine, sim_device, headless):
+    def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
         """ Parses the provided config file,
             calls create_sim() (which creates, simulation, terrain and environments),
             initilizes pytorch buffers used during training
@@ -322,20 +321,33 @@ class NavigationTask(BaseTask):
         else:
             self.obs_buf = torch.clone(self.privileged_obs_buf)
     
-    # Navigation Task:
-    # Observation:
-    # 局部height map (measure_points)
-    # 速度: base_lin_vel, ang_vel
-    # 关节速度？: dof_pos, dof_vel
     
-    def get_navigation_observations(self):
-        base_lin_vel = self.base_lin_vel
-        base_ang_vel = self.base_ang_vel
-        joint_vel = self.dof_vel
-        # 可以把clip限制解除，real中可以直接得到
-        # heights = torch.clip(self.root_states[:, 2].unsqueeze(1) - 0.5 - self.measured_heights, -1, 1.) * self.obs_scales.height_measurements
-        heights = self.root_statesp[:, 2].unsqueeze(1) * self.obs_scales.height_measurements
-        return torch.cat((base_lin_vel, base_ang_vel, joint_vel, heights), dim=-1)
+    def get_navigation_path(self):
+        """ Call Astar package to get the navigation path
+            self.navigation_path[i] = [(x0,y0),(x1,y1),...(xn,yn)]
+        """
+        self.navigation_path = {}
+        for i in range(self.num_envs):
+            heightfield = self.terrain.height_field_raw
+            
+            x0 = int(self.task_startings[i][0].item())
+            y0 = int(self.task_startings[i][1].item())
+            xn = int(self.task_goals[i][0].item())
+            yn = int(self.task_goals[i][1].item())
+            
+            starting = (x0,y0)
+            goal = (xn,yn)
+            
+            print("Env id", i, "starting", starting, "goal", goal)
+            
+            foundPath = MazeSolver(heightfield).astar(starting, goal)
+            if foundPath:
+                self.navigation_path[i] = list(foundPath)
+            else:
+                self.navigation_path = None
+            
+        print(self.navigation_path)
+        
 
     def get_amp_observations(self):
         joint_pos = self.dof_pos
@@ -388,7 +400,7 @@ class NavigationTask(BaseTask):
             Refer to play.py
         """
         # set path to load model
-        train_cfg_class = eval(self.cfg.locomotion.train_cfg_class)
+        train_cfg_class = eval(self.cfg.locomotion.train_cfg_class_name)
         self.train_cfg = train_cfg_class()
         self.train_cfg.runner.resume = True
         self.train_cfg.runner.load_run = self.cfg.locomotion.load_run
@@ -979,8 +991,10 @@ class NavigationTask(BaseTask):
         self.base_init_state = to_torch(base_init_state_list, device=self.device, requires_grad=False)
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
+        self.task_startings = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
 
         self._get_env_origins()
+        self._get_task_goals()
         env_lower = gymapi.Vec3(0., 0., 0.)
         env_upper = gymapi.Vec3(0., 0., 0.)
         self.actor_handles = []
@@ -995,8 +1009,9 @@ class NavigationTask(BaseTask):
                 pos = self.env_origins[i].clone()
                 pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
             
+            self.task_startings[i,:] = pos / self.cfg.terrain.horizontal_scale
             start_pose.p = gymapi.Vec3(*pos)
-                
+            
             rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
             self.gym.set_asset_rigid_shape_properties(robot_asset, rigid_shape_props)
             anymal_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, "anymal", i, self.cfg.asset.self_collisions, 0)
@@ -1010,6 +1025,9 @@ class NavigationTask(BaseTask):
             
             print('Origin at',self.env_origins[i].cpu().numpy(),
                   'pos is',start_pose.p)
+        
+        print('Searching inferencal navigation path...')
+        self.get_navigation_path()
 
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):
@@ -1056,7 +1074,24 @@ class NavigationTask(BaseTask):
             self.env_origins[:, 0] = spacing * xx.flatten()[:self.num_envs]
             self.env_origins[:, 1] = spacing * yy.flatten()[:self.num_envs]
             self.env_origins[:, 2] = 0.
-
+            
+    def _get_task_goals(self):
+        """ Get goals of each environment.
+            Same routine as self._get_env_origins
+        """
+        if self.cfg.terrain.mesh_type in ["heightfield", "trimesh"]:
+            self.custom_origins = True
+            self.task_goals = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
+            
+            self.terrain_levels = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').reshape(self.cfg.terrain.num_rows,self.cfg.terrain.num_cols).T.reshape(-1).to(torch.long)
+            
+            self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
+            self.max_terrain_level = self.cfg.terrain.num_rows
+            self.terrain_goals = torch.from_numpy(self.terrain.env_goals).to(self.device).to(torch.float)
+            self.task_goals[:,:2] = self.terrain_goals[self.terrain_levels, self.terrain_types][:,:2]
+        else:
+            raise NotImplementedError("Task goals are not implemented for terrain type = "+self.cfg.terrain.mesh_type)
+ 
     def _parse_cfg(self, cfg):
         self.dt = self.cfg.control.decimation * self.sim_params.dt
         self.obs_scales = self.cfg.normalization.obs_scales

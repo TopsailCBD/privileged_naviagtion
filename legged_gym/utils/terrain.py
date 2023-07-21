@@ -51,6 +51,7 @@ class Terrain:
 
         self.cfg.num_sub_terrains = cfg.num_rows * cfg.num_cols
         self.env_origins = np.zeros((cfg.num_rows, cfg.num_cols, 3))
+        self.env_goals = np.zeros((cfg.num_rows, cfg.num_cols, 3))
 
         self.width_per_env_pixels = int(self.env_width / cfg.horizontal_scale)
         self.length_per_env_pixels = int(self.env_length / cfg.horizontal_scale)
@@ -221,11 +222,19 @@ class Terrain:
         
         # print(i,j,env_origin_x,env_origin_y)
         
-        x1 = int((self.env_length/2. - 1) / terrain.horizontal_scale)
-        x2 = int((self.env_length/2. + 1) / terrain.horizontal_scale)
-        y1 = int((self.env_width/2. - 1) / terrain.horizontal_scale)
-        y2 = int((self.env_width/2. + 1) / terrain.horizontal_scale)
-        env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2])*terrain.vertical_scale
+        # Navigation Task: set goals of navigation task (startings set in class TaskEnv)
+        env_goal_x = i * self.length_per_env_pixels + terrain.goal[0]
+        env_goal_y = j * self.width_per_env_pixels + terrain.goal[1]
+        env_goal_z = terrain.goal[2]
+        self.env_goals[i, j] = [env_goal_x,env_goal_y,env_goal_z]
+        
+        # Navigation Task: origin might not be platform
+        # x1 = int((self.env_length/2. - 1) / terrain.horizontal_scale)
+        # x2 = int((self.env_length/2. + 1) / terrain.horizontal_scale)
+        # y1 = int((self.env_width/2. - 1) / terrain.horizontal_scale)
+        # y2 = int((self.env_width/2. + 1) / terrain.horizontal_scale)
+        # env_origin_z = np.max(terrain.height_field_raw[x1:x2, y1:y2])*terrain.vertical_scale
+        env_origin_z = 0.0
         self.env_origins[i, j] = [env_origin_x, env_origin_y, env_origin_z]
 
 def gap_terrain(terrain, gap_size, platform_size=1.):

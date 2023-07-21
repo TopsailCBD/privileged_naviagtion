@@ -8,7 +8,7 @@ from isaacgym import gymutil, gymapi
 
 def discrete_obstacles_terrain(terrain, max_height, min_size, max_size, num_rects, platform_size=1.):
     """
-    Generate a terrain with gaps
+    Generate a terrain with gaps (Template of all Navigation Terrains)
 
     Parameters:
         terrain (terrain): the terrain
@@ -87,17 +87,17 @@ def box_terrain(terrain, max_height, min_size, max_size, num_rects, wall_height)
         door_start_j = np.random.choice(range(0, j-door_width, 4))
         if door_wall_idx == 0:
             terrain.height_field_raw[:10,door_start_j:door_start_j+door_width] = 0
-            terrain.goal = np.array([2, door_start_j + door_width // 2])
+            terrain.goal = np.array([2, door_start_j + door_width // 2, 0])
         elif door_wall_idx == 2:
             terrain.height_field_raw[-10:,door_start_j:door_start_j+door_width] = 0
-            terrain.goal = np.array([terrain.width - 2, door_start_j + door_width // 2])
+            terrain.goal = np.array([terrain.width - 2, door_start_j + door_width // 2, 0])
     else:
         door_start_i = np.random.choice(range(0, i-door_width, 4))
         if door_wall_idx == 1:
             terrain.height_field_raw[door_start_i:door_start_i+door_width,:10] = 0
-            terrain.goal = np.array([door_start_i + door_width // 2, 2])
+            terrain.goal = np.array([door_start_i + door_width // 2, 2 ,0])
         elif door_wall_idx == 3:
             terrain.height_field_raw[door_start_i:door_start_i+door_width,-10:] = 0
-            terrain.goal = np.array([door_start_i + door_width // 2, terrain.length - 2])
+            terrain.goal = np.array([door_start_i + door_width // 2, terrain.length - 2, 0])
         
     return terrain

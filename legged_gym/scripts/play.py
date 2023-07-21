@@ -82,12 +82,12 @@ def play(args):
     _, _ = env.reset()
     obs = env.get_observations()
     # load policy
-    train_cfg.runner.resume = True
+    # train_cfg.runner.resume = True
     # train_cfg.runner.load_run = 'Jul02_19-10-19_plane_collect_rate_rldata'
     # train_cfg.runner.load_run = 'Jul01_16-56-15_plane_collect'
     # train_cfg.runner.load_run = 'Jul02_15-58-46_plane_collect_rate'
-    train_cfg.runner.load_run = 'Jul04_10-43-17_plane_collect_rate_reward'
-    train_cfg.runner.checkpoint = 2000
+    # train_cfg.runner.load_run = 'Jul04_10-43-17_plane_collect_rate_reward'
+    # train_cfg.runner.checkpoint = 2000
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args, train_cfg=train_cfg)
     policy = ppo_runner.get_inference_policy(device=env.device)
     
