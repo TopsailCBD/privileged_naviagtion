@@ -364,8 +364,20 @@ class NavigationTask(BaseTask):
         for i in range(self.num_envs):
             base_pos = self.root_states[i, :3].cpu().numpy()
             next_landmark = self.task_next_landmarks[i,:].cpu().numpy()
-            print(base_pos,next_landmark)
+            # print(base_pos,next_landmark)
+            base_coordinate = base_pos / self.cfg.terrain.horizontal_scale
             
+            if int(base_coordinate[0]) == int(next_landmark[0]) and int(base_coordinate[1]) == int(next_landmark[1]):
+                print("Env id", i, "has reached next landmark")
+                if self.navigation_path[i] is not None:
+                    if len(self.navigation_path[i]) > 2:
+                        self.task_next_landmarks[i,:] = self.navigation_path[i][2]
+                        self.navigation_path[i] = self.navigation_path[i][1:]
+                    else:
+                        self.task_next_landmarks[i,:] = self.navigation_path[i][1]
+                        self.navigation_path[i] = None
+                else:
+                    self.task_next_landmarks[i,:] = self.task_goals[i,:]
 
     def get_amp_observations(self):
         joint_pos = self.dof_pos
