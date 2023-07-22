@@ -38,18 +38,19 @@ class A1NavigationCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         num_envs = 4096
         include_history_steps = None  # Number of steps of history to include.
-        num_observations = 235
-        num_privileged_obs = 235
+        num_observations = 136
+        num_privileged_obs = 136
         reference_state_initialization = False
         reference_state_initialization_prob = 0.85
 
     class locomotion:
         train_cfg_class_name = 'A1NavigationCfgPPO'
         num_privileged_obs = None
-        num_observations = 235
+        num_observations = 48 # amp
         num_actions = 12
         load_run = 'Jul04_10-43-17_plane_collect_rate_reward'
         checkpoint = 2000
+        time_per_step = 0.02
     
     class terrain( LeggedRobotCfg.terrain):
         measure_heights = True
@@ -235,6 +236,10 @@ class A1NavigationCfg( LeggedRobotCfg ):
             lin_vel_y = [-0.4, 0.4]   # min max [m/s]
             ang_vel_yaw = [-0.4, 0.4]    # min max [rad/s]
             heading = [-3.14/4, 3.14/4]
+        class choices:
+            lin_vel_x = [0.4]
+            lin_vel_y = [0.0]
+            ang_vel_yaw = [-0.4, -0.3,-0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4]
 
 class A1NavigationCfgPPO( LeggedRobotCfgPPO ):
     runner_class_name = 'AMPOnPolicyRunner'

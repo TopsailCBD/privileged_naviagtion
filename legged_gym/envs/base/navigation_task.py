@@ -32,6 +32,7 @@ import os
 from time import time
 from typing import Dict, Tuple
 from warnings import WarningMessage
+from itertools import product
 
 import numpy as np
 import torch
@@ -41,7 +42,7 @@ from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.helpers import class_to_dict, get_load_path
 from legged_gym.utils.math_utils import (quat_apply_yaw, torch_rand_sqrt_float,
-                                         wrap_to_pi)
+                                         wrap_to_pi, estimate_next_pose)
 from legged_gym.utils.maze_solver import MazeSolver
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.terrain import Terrain
@@ -194,13 +195,14 @@ class NavigationTask(BaseTask):
         self._post_physics_step_callback()
 
         # compute observations, rewards, resets, ...
+        self.update_navigation_landmarks()
         self.check_termination()
         self.compute_reward()
         env_ids = self.reset_buf.nonzero(as_tuple=False).flatten()
         terminal_amp_states = self.get_amp_observations()[env_ids]
         self.reset_idx(env_ids)
         self.compute_observations() # in some cases a simulation step might be required to refresh some obs (for example body positions)
-
+        
         self.last_actions[:] = self.actions[:]
         self.last_dof_pos[:] = self.dof_pos[:]
         self.last_dof_vel[:] = self.dof_vel[:]
@@ -214,6 +216,10 @@ class NavigationTask(BaseTask):
     def check_termination(self):
         """ Check if environments need to be reset
         """
+        # TBD: Reset due to the goal has been reached
+        
+        
+        # Reset due to time out
         self.reset_buf = torch.any(torch.norm(self.contact_forces[:, self.termination_contact_indices, :], dim=-1) > 1., dim=1)
         self.time_out_buf = self.episode_length_buf > self.max_episode_length # no terminal reward for time-outs
         self.reset_buf |= self.time_out_buf
@@ -344,12 +350,22 @@ class NavigationTask(BaseTask):
             
             foundPath = MazeSolver(heightfield).astar(starting, goal)
             if foundPath:
-                self.navigation_path[i] = list(foundPath)
+                self.navigation_path[i] = torch.Tensor([[p[0],p[1]] for p in foundPath])
+                self.task_next_landmarks[i,:] = self.navigation_path[i][1]
             else:
                 self.navigation_path[i] = None
-            
-        # print(self.navigation_path)
         
+        # print(self.navigation_path)
+    
+    def update_navigation_landmarks(self):
+        """ Update navigation landmarks if the robot has reached next landmark.
+        """
+        print("Update navigation landmarks...")
+        for i in range(self.num_envs):
+            base_pos = self.root_states[i, :3].cpu().numpy()
+            next_landmark = self.task_next_landmarks[i,:].cpu().numpy()
+            print(base_pos,next_landmark)
+            
 
     def get_amp_observations(self):
         joint_pos = self.dof_pos
@@ -407,6 +423,7 @@ class NavigationTask(BaseTask):
         self.train_cfg.runner.resume = True
         self.train_cfg.runner.load_run = self.cfg.locomotion.load_run
         self.train_cfg.runner.checkpoint = self.cfg.locomotion.checkpoint
+        train_cfg_dict = class_to_dict(self.train_cfg)
         # load previously trained model
         resume_path = get_load_path(
                                     root=os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', self.train_cfg.runner.experiment_name), 
@@ -423,7 +440,7 @@ class NavigationTask(BaseTask):
         self.locomotion_actor_critic: ActorCritic = actor_critic_class( self.cfg.locomotion.num_observations,
                                                         num_critic_obs,
                                                         self.cfg.locomotion.num_actions,
-                                                        **self.train_cfg.policy).to(self.device)
+                                                        **train_cfg_dict["policy"]).to(self.device)
         print(f"Loading model from: {resume_path}")
         loaded_dict = torch.load(resume_path)
         
@@ -993,7 +1010,11 @@ class NavigationTask(BaseTask):
         self.base_init_state = to_torch(base_init_state_list, device=self.device, requires_grad=False)
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*self.base_init_state[:3])
+        
+        # initialize variants for giving a privileged navigation
         self.task_startings = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
+        self.teacher_commands = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
+        self.task_next_landmarks = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
 
         self._get_env_origins()
         self._get_task_goals()
@@ -1181,10 +1202,26 @@ class NavigationTask(BaseTask):
 
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
 
+    def _compute_teacher_commands(self):
+        """ Compute the best command to reach next landmark
+        """
+        for i in range(self.num_envs):
+            base_pos = (self.root_states[i, :3]).cpu().numpy()
+            command_list = product(
+                self.cfg.commands.choices.lin_vel_x,
+                self.cfg.commands.choices.lin_vel_y,
+                self.cfg.commands.choices.ang_vel_yaw
+                )
+            
+            time_per_step = self.cfg.locomotion.time_per_step
+            new_poses = map(lambda x: estimate_next_pose(base_pos, time_per_step, x), command_list)
+            
+            self.teacher_commands[i,:3] = torch.tensor(min(new_poses, key=lambda x: torch.norm(x - self.task_next_landmarks[i,:3])).tolist(), device=self.device, requires_grad=False)
+    
     #------------ reward functions----------------
     
     def _reward_behaviour(self):
-        return torch.sqrt(self.command - self.teacher_command, dim = 1)
+        return torch.sqrt(self.commands - self.teacher_commands, dim = 1)
     
     # def _reward_success(self):
         # return torch.sqrt(self.cur_pos - self.task_goals, dim = 1) < epsilon

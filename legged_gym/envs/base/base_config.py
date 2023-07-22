@@ -53,3 +53,6 @@ class BaseConfig:
                 setattr(obj, key, i_var)
                 # recursively init members of the attribute
                 BaseConfig.init_member_classes(i_var)
+                
+    def __getitem__(self, key):
+        return getattr(self, key)

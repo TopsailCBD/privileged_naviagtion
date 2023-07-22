@@ -54,3 +54,13 @@ def torch_rand_sqrt_float(lower, upper, shape, device):
     r = torch.where(r<0., -torch.sqrt(-r), torch.sqrt(r))
     r =  (r + 1.) / 2.
     return (upper - lower) * r + lower
+
+def estimate_next_pose(pos,dt,command):
+    # type: (np.ndarray, float, Tuple) -> np.ndarray
+    # Estimate new pose by regarding arc length = v*dt
+    vx, vy, w = command
+    new_pos = pos.clone()
+    new_pos[0] = pos[0] + vx * dt * np.cos(pos[2])
+    new_pos[1] = pos[1] + vx * dt * np.sin(pos[2])
+    new_pos[2] = pos[2] + w *dt
+    return new_pos
