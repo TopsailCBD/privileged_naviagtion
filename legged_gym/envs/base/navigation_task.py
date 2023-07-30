@@ -330,32 +330,32 @@ class NavigationTask(BaseTask):
             self.obs_buf = torch.clone(self.privileged_obs_buf)
     
     
-    def get_navigation_path(self):
-        """ Call Astar package to get the navigation path
-            self.navigation_path[i] = [(x0,y0),(x1,y1),...(xn,yn)]
-        """
-        self.navigation_path = {}
-        for i in range(self.num_envs):
-            heightfield = self.terrain.height_field_raw
+    # def get_navigation_path(self):
+    #     """ Call Astar package to get the navigation path
+    #         self.navigation_path[i] = [(x0,y0),(x1,y1),...(xn,yn)]
+    #     """
+    #     self.navigation_path = {}
+    #     for i in range(self.num_envs):
+    #         heightfield = self.terrain.height_field_raw
             
-            x0 = int(self.task_startings[i][0].item())
-            y0 = int(self.task_startings[i][1].item())
-            xn = int(self.task_goals[i][0].item())
-            yn = int(self.task_goals[i][1].item())
+    #         x0 = int(self.task_startings[i][0].item())
+    #         y0 = int(self.task_startings[i][1].item())
+    #         xn = int(self.task_goals[i][0].item())
+    #         yn = int(self.task_goals[i][1].item())
             
-            starting = (x0,y0)
-            goal = (xn,yn)
+    #         starting = (x0,y0)
+    #         goal = (xn,yn)
             
-            print("Env id", i, "starting", starting, "goal", goal)
+    #         print("Env id", i, "starting", starting, "goal", goal)
             
-            foundPath = MazeSolver(heightfield).astar(starting, goal)
-            if foundPath:
-                self.navigation_path[i] = torch.Tensor([[p[0],p[1]] for p in foundPath])
-                self.task_next_landmarks[i,:] = self.navigation_path[i][1]
-            else:
-                self.navigation_path[i] = None
+    #         foundPath = MazeSolver(heightfield).astar(starting, goal)
+    #         if foundPath:
+    #             self.navigation_path[i] = torch.Tensor([[p[0],p[1]] for p in foundPath])
+    #             self.task_next_landmarks[i,:] = self.navigation_path[i][1]
+    #         else:
+    #             self.navigation_path[i] = None
         
-        # print(self.navigation_path)
+    #     # print(self.navigation_path)
     
     def update_navigation_landmarks(self):
         """ Update navigation landmarks if the robot has reached next landmark.
@@ -774,14 +774,12 @@ class NavigationTask(BaseTask):
         # base position
         if self.custom_origins:
             self.root_states[env_ids] = self.base_init_state
-            self.root_states[env_ids, :3] += self.env_origins[env_ids]
+            # self.root_states[env_ids, :3] += self.env_origins[env_ids]
             # self.root_states[env_ids, :2] += torch_rand_float(-1., 1., (len(env_ids), 2), device=self.device) # xy position within 1m of the center
-            self.root_states[env_ids, :2] += torch_rand_float(-2., 2., (len(env_ids), 2), device=self.device) # xy position within 2m of the center
-            for env_id in env_ids:
-                while self._blocked_root_position(env_id, self.root_states[env_id, :3]):
-                    self.root_states[env_id, :3] = self.base_init_state[:3] + self.env_origins[env_id, :3]
-                    self.root_states[env_id, :2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
-            
+            # self.root_states[env_ids, :2] += torch_rand_float(-2., 2., (len(env_ids), 2), device=self.device) 
+            self._resample_startings(env_ids)
+            self._resample_goals(env_ids)
+            self.root_states[env_ids, :2] = self.task_startings[env_ids, :2]
         else:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
@@ -813,31 +811,31 @@ class NavigationTask(BaseTask):
                                                      gymtorch.unwrap_tensor(self.root_states),
                                                      gymtorch.unwrap_tensor(env_ids_int32), len(env_ids_int32))
 
-    def _blocked_root_position(self, env_ids, pos):
-        """ Return whether the spawn point of the robot is blocked by terrain.
-        """
-        # print(self.terrain.height_field_raw.shape) # 820,820
-        # print(self.terrain.length_per_env_pixels, self.terrain.width_per_env_pixels) # 80,80
+    # def _blocked_root_position(self, env_ids, pos):
+    #     """ Return whether the spawn point of the robot is blocked by terrain.
+    #     """
+    #     # print(self.terrain.height_field_raw.shape) # 820,820
+    #     # print(self.terrain.length_per_env_pixels, self.terrain.width_per_env_pixels) # 80,80
         
-        i = env_ids // self.cfg.terrain.num_rows
-        j = env_ids % self.cfg.terrain.num_cols
+    #     i = env_ids // self.cfg.terrain.num_rows
+    #     j = env_ids % self.cfg.terrain.num_cols
         
-        length_box = 10
-        width_box = 10
+    #     length_box = 10
+    #     width_box = 10
         
-        center_x = int(pos[0]*10)
-        center_y = int(pos[1]*10)
+    #     center_x = int(pos[0]*10)
+    #     center_y = int(pos[1]*10)
         
-        # map coordinate system
-        start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
-        end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
-        start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
-        end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
+    #     # map coordinate system
+    #     start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
+    #     end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
+    #     start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
+    #     end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
         
-        # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
+    #     # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
         
-        return np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01
-        # return False
+    #     return np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01
+    #     # return False
     
     def _push_robots(self):
         """ Random pushes the robots. Emulates an impulse by setting a randomized base velocity. 
@@ -1161,17 +1159,19 @@ class NavigationTask(BaseTask):
         env_upper = gymapi.Vec3(0., 0., 0.)
         self.actor_handles = []
         self.envs = []
+        
+        # Before set the starting and goals, generate the agent as default setting (start at the origin)
         for i in range(self.num_envs):
             # create env instance
             env_handle = self.gym.create_env(self.sim, env_lower, env_upper, int(np.sqrt(self.num_envs)))
             pos = self.env_origins[i].clone()
-            pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
+            # pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
             
-            while self._blocked_root_position(i,pos):
-                pos = self.env_origins[i].clone()
-                pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
+            # while self._blocked_root_position(i,pos):
+            #     pos = self.env_origins[i].clone()
+            #     pos[:2] += torch_rand_float(-2., 2., (2,1), device=self.device).squeeze(1)
             
-            self.task_startings[i,:] = pos / self.cfg.terrain.horizontal_scale
+            # self.task_startings[i,:] = pos / self.cfg.terrain.horizontal_scale
             start_pose.p = gymapi.Vec3(*pos)
             
             rigid_shape_props = self._process_rigid_shape_props(rigid_shape_props_asset, i)
@@ -1188,8 +1188,11 @@ class NavigationTask(BaseTask):
             print('Origin at',self.env_origins[i].cpu().numpy(),
                   'pos is',start_pose.p)
         
-        print('Searching inferencal navigation path...')
-        self.get_navigation_path()
+        # print('Searching inferencal navigation path...')
+        # self.get_navigation_path()
+        
+        self._resample_startings()
+        self._resample_goals()
 
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):
