@@ -29,10 +29,10 @@
 # Copyright (c) 2021 ETH Zurich, Nikita Rudin
 
 import os
+from itertools import product
 from time import time
 from typing import Dict, Tuple
 from warnings import WarningMessage
-from itertools import product
 
 import numpy as np
 import torch
@@ -41,8 +41,8 @@ from isaacgym.torch_utils import *
 from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.helpers import class_to_dict, get_load_path
-from legged_gym.utils.math_utils import (quat_apply_yaw, torch_rand_sqrt_float,
-                                         wrap_to_pi, estimate_next_pose)
+from legged_gym.utils.math_utils import (estimate_next_pose, quat_apply_yaw,
+                                         torch_rand_sqrt_float, wrap_to_pi)
 from legged_gym.utils.maze_solver import MazeSolver
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.terrain import Terrain
@@ -50,8 +50,8 @@ from rsl_rl.datasets.motion_loader import AMPLoader
 from rsl_rl.modules.actor_critic import ActorCritic
 from torch import Tensor
 
-from .legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 from ..a1.a1_navigation_config import A1NavigationCfg, A1NavigationCfgPPO
+from .legged_robot_config import LeggedRobotCfg, LeggedRobotCfgPPO
 
 COM_OFFSET = torch.tensor([0.012731, 0.002186, 0.000515])
 HIP_OFFSETS = torch.tensor([
@@ -569,6 +569,133 @@ class NavigationTask(BaseTask):
         # set small commands to zero
         self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
+    def _resample_startings(self, env_ids):
+        """ Randommly select startings of some environments
+        
+        Args:
+            env_ids (List[int]): Environments ids for which new commands are needed
+        """
+        
+        if len(env_ids) == 0:
+            return
+        
+        # Select new startings
+        starting_incerment_x = torch_rand_float(self.task_ranges["starting_x"][0], self.task_ranges["starting_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        starting_incerment_y = torch_rand_float(self.task_ranges["starting_y"][0], self.task_ranges["starting_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        self.task_startings[env_ids, 2] = torch_rand_float(self.task_ranges["starting_yaw"][0], self.task_ranges["starting_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        
+        
+        self.task_startings[env_ids, 0] = self.env_origins[env_ids, 0] + starting_incerment_x // self.cfg.terrain.horizontal_scale
+        self.task_startings[env_ids, 1] = self.env_origins[env_ids, 1] + starting_incerment_y // self.cfg.terrain.horizontal_scale
+        
+        
+        # Check if new startings are valid
+        env_ids_to_resample = []
+        for env_id in env_ids:
+            if not self._is_valid_starting(env_id):
+                env_ids_to_resample.append(env_id)
+        
+        # If not vaild, regenerate a starting
+        self._resample_startings(env_ids_to_resample)
+        
+        
+    def _is_valid_starting(self, env_id):
+        """ Check if the starting is valid: starting should not be in the obstacles.
+        
+        Args:
+            env_id (int): ID of environment to be checked.
+        """
+        i = env_id // self.cfg.terrain.num_rows
+        j = env_id % self.cfg.terrain.num_cols
+        
+        length_box = 5
+        width_box = 5
+        
+        center_x = self.task_startings[env_id, 0]
+        center_y = self.task_startings[env_id, 1]
+        
+        # map coordinate system
+        start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
+        end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
+        start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
+        end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
+        
+        # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
+        
+        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
+            print(f"In checking starting of env {env_id}, starting is in obstacles.")
+            return False
+        else:
+            return True
+        
+        
+    def _resample_goals(self, env_ids):
+        """ Randommly select goals of some environments
+            In practice, we sample a goal and take the distance between the goal and the starting as the command.
+        """
+        
+        goal_incerment_x = torch_rand_float(self.task_ranges["goal_x"][0], self.task_ranges["goal_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        goal_incerment_y = torch_rand_float(self.task_ranges["goal_y"][0], self.task_ranges["goal_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        
+        self.task_goals[env_ids, 0] = self.env_origins[env_ids, 0] + goal_incerment_x // self.cfg.terrain.horizontal_scale
+        self.task_goals[env_ids, 1] = self.env_origins[env_ids, 1] + goal_incerment_y // self.cfg.terrain.horizontal_scale
+        
+        env_ids_to_resample = []
+        for env_id in env_ids:
+            if not self._is_valid_goal(env_id):
+                env_ids_to_resample.append(env_id)
+        
+        # If not vaild, regenerate a goal
+        self._resample_goals(env_ids_to_resample)
+        
+    def _is_valid_goal(self, env_id):
+        """ Check if the goal is valid: goal should not be in the obstacles, and goals should have a path to startings. If a valid path found, add it to the table.
+        
+        Calls MazeSolver.astar() to check if a path exists.
+        
+        Args:
+            env_id (int): ID of environment to be checked.
+        """
+        i = env_id // self.cfg.terrain.num_rows
+        j = env_id % self.cfg.terrain.num_cols
+        
+        length_box = 5
+        width_box = 5
+        
+        center_x = self.task_startings[env_id, 0]
+        center_y = self.task_startings[env_id, 1]
+        
+        # map coordinate system
+        start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
+        end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
+        start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
+        end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
+        
+        # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
+        
+        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
+            print(f"In checking goal of env {env_id}, goal is in obstacles.")
+            return False
+        
+        # Check if there is a path from starting to goal
+        
+        x0 = int(self.task_startings[env_id, 0].item())
+        y0 = int(self.task_startings[env_id, 1].item())
+        xn = int(self.task_goals[env_id, 0].item())
+        yn = int(self.task_goals[env_id, 1].item())
+        
+        pathfound = MazeSolver(self.terrain.height_field_raw).astar((x0,y0), (xn,yn))
+        
+        if len(pathfound) == 0:
+            print(f"In checking goal of env {env_id}, no path found.")
+            return False
+        elif len(pathfound) < self.cfg.task.min_path_length:
+            print(f"In checking goal of env {env_id}, too close goal.")
+            return False
+        else:
+            self.navigation_path[env_id] = torch.Tensor([[p[0],p[1]] for p in pathfound])
+            return True
+    
     def _compute_torques(self, actions):
         """ Compute torques from actions.
             Actions can be interpreted as position or velocity targets given to a PD controller, or directly as scaled torques.
@@ -1132,6 +1259,7 @@ class NavigationTask(BaseTask):
         self.obs_scales = self.cfg.normalization.obs_scales
         self.reward_scales = class_to_dict(self.cfg.rewards.scales)
         self.command_ranges = class_to_dict(self.cfg.commands.ranges)
+        self.task_ranges = class_to_dict(self.cfg.task.ranges)
         if self.cfg.terrain.mesh_type not in ['heightfield', 'trimesh']:
             self.cfg.terrain.curriculum = False
         self.max_episode_length_s = self.cfg.env.episode_length_s

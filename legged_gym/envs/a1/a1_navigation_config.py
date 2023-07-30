@@ -217,6 +217,19 @@ class A1NavigationCfg( LeggedRobotCfg ):
             # dof_pos_dif = -0.1
             # stand_still = -0.
 
+    class task:
+        class ranges:
+            # From env center to starting point
+            starting_x = [-0.5, 0.5]
+            starting_y = [-0.5, 0.5]
+            # Heading on starting point
+            starting_yaw = [-3.14, 3.14]
+            # From env center to goal
+            goal_x = [-2, 2]
+            goal_y = [-2, 2]
+        
+        min_path_length = 10
+    
     class commands:
         # curriculum = False
         # max_curriculum = 1.
