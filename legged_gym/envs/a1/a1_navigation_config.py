@@ -219,6 +219,7 @@ class A1NavigationCfg( LeggedRobotCfg ):
 
     class task:
         class ranges:
+            # Scale: m
             # From env center to starting point
             starting_x = [-0.5, 0.5]
             starting_y = [-0.5, 0.5]
@@ -228,7 +229,7 @@ class A1NavigationCfg( LeggedRobotCfg ):
             goal_x = [-2, 2]
             goal_y = [-2, 2]
         
-        min_path_length = 10
+        min_path_length = 5 # Scale: pixels
     
     class commands:
         # curriculum = False
