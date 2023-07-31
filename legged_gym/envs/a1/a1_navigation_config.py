@@ -221,8 +221,8 @@ class A1NavigationCfg( LeggedRobotCfg ):
         class ranges:
             # Scale: m
             # From env center to starting point
-            starting_x = [-0.5, 0.5]
-            starting_y = [-0.5, 0.5]
+            starting_x = [-2, 2]
+            starting_y = [-2, 2]
             # Heading on starting point
             starting_yaw = [-3.14, 3.14]
             # From env center to goal

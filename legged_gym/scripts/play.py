@@ -129,7 +129,9 @@ def play(args):
             env.set_camera(camara_position, lootat)
             # camera_position += camera_vel * env.dt
             # env.set_camera(camera_position, camera_position + camera_direction)
-
+        if RESET_BY_STEP != 0:
+            if i % RESET_BY_STEP == 0:
+                _,_ = env.reset()
         if i < stop_state_log:
             logger.log_states(
                 {
@@ -164,6 +166,7 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
+    RESET_BY_STEP = 100
     args = get_args()
     args.rl_device = args.sim_device
     play(args)
