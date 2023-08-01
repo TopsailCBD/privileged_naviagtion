@@ -64,3 +64,22 @@ def estimate_next_pose(pos,dt,command):
     new_pos[1] = pos[1] + vx * dt * np.sin(pos[2])
     new_pos[2] = pos[2] + w *dt
     return new_pos
+
+def coordinate_transform(new_origin_in_old, target_point_in_old):
+    # type: (torch.Tensor, torch.Tensor) -> torch.Tensor
+    # Transform new coordinate to target coordinate
+    # new_coordinate_in_origin: (x, y, theta): coordinate of new origin in old coordinate
+    # target_in_origin: (x, y): coordiante of target point in old coordinate
+    # return: target_in_new: (x, y): coordinate of target point in new coordinate
+    dx,dy,dtheta = new_origin_in_old
+    cos_ = torch.cos(dtheta)
+    sin_ = torch.sin(dtheta)
+    transform_matrix = torch.Tensor([
+        [cos_, sin_, -cos_*dx-sin_*dy],
+        [sin_, -cos_, cos_*dy-sin_*dx]
+        [0.0, 0.0, 1.0]
+        ])
+    _target_point_in_old = torch.Tensor([target_point_in_old[0], target_point_in_old[1], 1.0])
+    _target_point_in_new = torch.matmul(transform_matrix, _target_point_in_old)
+    
+    return _target_point_in_new[:2]

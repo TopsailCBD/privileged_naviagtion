@@ -223,10 +223,10 @@ class Terrain:
         # print(i,j,env_origin_x,env_origin_y)
         
         # Navigation Task: set goals of navigation task (startings set in class TaskEnv)
-        env_goal_x = i * self.length_per_env_pixels + terrain.goal[0]
-        env_goal_y = j * self.width_per_env_pixels + terrain.goal[1]
-        env_goal_z = terrain.goal[2]
-        self.env_goals[i, j] = [env_goal_x,env_goal_y,env_goal_z]
+        # env_goal_x = i * self.length_per_env_pixels + terrain.goal[0]
+        # env_goal_y = j * self.width_per_env_pixels + terrain.goal[1]
+        # env_goal_z = terrain.goal[2]
+        # self.env_goals[i, j] = [env_goal_x,env_goal_y,env_goal_z]
         
         # Navigation Task: origin might not be platform
         # x1 = int((self.env_length/2. - 1) / terrain.horizontal_scale)

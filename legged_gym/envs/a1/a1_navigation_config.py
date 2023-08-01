@@ -34,8 +34,8 @@ from legged_gym.envs.base.legged_robot_config import LeggedRobotCfg, LeggedRobot
 MOTION_FILES = glob.glob('datasets/mocap_motions/*')
 
 class A1NavigationCfg( LeggedRobotCfg ):
-
     class env( LeggedRobotCfg.env ):
+        mode = 'train'
         num_envs = 4096
         include_history_steps = None  # Number of steps of history to include.
         num_observations = 136
@@ -53,11 +53,16 @@ class A1NavigationCfg( LeggedRobotCfg ):
         time_per_step = 0.02
     
     class terrain( LeggedRobotCfg.terrain):
+        mesh_type = 'trimesh'
         measure_heights = True
+        
+        max_init_terrain_level = 5
         
         # Navigation Task: 以下参数需要改为机器人头部前方
         measured_points_x = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8] # 1mx1.6m rectangle (without center line)
         measured_points_y = [-0.5, -0.4, -0.3, -0.2, -0.1, 0., 0.1, 0.2, 0.3, 0.4, 0.5]
+        
+        terrain_proportions = [0.0, 0.0, 0.0, 0.0, 1.0]
         
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0,0,0.42]# [0.0, 0.0, 0.42] # x,y,z [m]

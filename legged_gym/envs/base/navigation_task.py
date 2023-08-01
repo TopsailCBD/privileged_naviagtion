@@ -42,7 +42,7 @@ from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.helpers import class_to_dict, get_load_path
 from legged_gym.utils.math_utils import (estimate_next_pose, quat_apply_yaw,
-                                         torch_rand_sqrt_float, wrap_to_pi)
+                                         torch_rand_sqrt_float, wrap_to_pi, coordinate_transform)
 from legged_gym.utils.maze_solver import MazeSolver
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.terrain import Terrain
@@ -559,15 +559,20 @@ class NavigationTask(BaseTask):
         Args:
             env_ids (List[int]): Environments ids for which new commands are needed
         """
-        self.commands[env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0], self.command_ranges["lin_vel_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        if self.cfg.commands.heading_command:
-            self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0], self.command_ranges["heading"][1], (len(env_ids), 1), device=self.device).squeeze(1)
-        else:
-            self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        
+        for env_id in env_ids:
+            self.commands[env_id,:2] = coordinate_transform(self.task_startings[env_id,:],self.task_goals[env_id,:2])
+        
+        
+        # self.commands[env_ids, 0] = torch_rand_float(self.command_ranges["lin_vel_x"][0], self.command_ranges["lin_vel_x"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        # self.commands[env_ids, 1] = torch_rand_float(self.command_ranges["lin_vel_y"][0], self.command_ranges["lin_vel_y"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        # if self.cfg.commands.heading_command:
+        #     self.commands[env_ids, 3] = torch_rand_float(self.command_ranges["heading"][0], self.command_ranges["heading"][1], (len(env_ids), 1), device=self.device).squeeze(1)
+        # else:
+        #     self.commands[env_ids, 2] = torch_rand_float(self.command_ranges["ang_vel_yaw"][0], self.command_ranges["ang_vel_yaw"][1], (len(env_ids), 1), device=self.device).squeeze(1)
 
         # set small commands to zero
-        self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
+        # self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
     def _resample_startings(self, env_ids):
         """ Randommly select startings of some environments
@@ -855,7 +860,6 @@ class NavigationTask(BaseTask):
         self.root_states[:, 7:9] = torch_rand_float(-max_vel, max_vel, (self.num_envs, 2), device=self.device) # lin vel x/y
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_states))
 
-    # Navigation Task: 修改以下两个函数: 初始化环境的方式不同
     def _update_terrain_curriculum(self, env_ids):
         """ Implements the game-inspired curriculum.
 
@@ -884,6 +888,8 @@ class NavigationTask(BaseTask):
         Args:
             env_ids (List[int]): ids of environments being reset
         """
+        return
+        # Navigation task does not offers a command curriculum up to now.
         # If the tracking reward is above 80% of the maximum, increase the range of commands
         if (torch.mean(self.episode_sums["tracking_lin_vel"][env_ids]) / self.max_episode_length > 0.8 * \
                 self.reward_scales["tracking_lin_vel"]) and \
@@ -1165,7 +1171,7 @@ class NavigationTask(BaseTask):
         self.task_next_landmarks = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
 
         self._get_env_origins()
-        self._get_task_goals()
+        # self._get_task_goals()
         env_lower = gymapi.Vec3(0., 0., 0.)
         env_upper = gymapi.Vec3(0., 0., 0.)
         self.actor_handles = []
@@ -1228,9 +1234,11 @@ class NavigationTask(BaseTask):
             # put robots at the origins defined by the terrain
             max_init_level = self.cfg.terrain.max_init_terrain_level
             if not self.cfg.terrain.curriculum: max_init_level = self.cfg.terrain.num_rows - 1
-            # self.terrain_levels = torch.randint(0, max_init_level+1, (self.num_envs,), device=self.device)
             
-            self.terrain_levels = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').reshape(self.cfg.terrain.num_rows,self.cfg.terrain.num_cols).T.reshape(-1).to(torch.long)
+            if self.cfg.env.mode == 'train':
+                self.terrain_levels = torch.randint(0, max_init_level+1, (self.num_envs,), device=self.device)
+            elif self.cfg.env.mode == 'play':
+                self.terrain_levels = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').reshape(self.cfg.terrain.num_rows,self.cfg.terrain.num_cols).T.reshape(-1).to(torch.long)
             
             self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
             self.max_terrain_level = self.cfg.terrain.num_rows
@@ -1252,22 +1260,22 @@ class NavigationTask(BaseTask):
             self.env_origins[:, 1] = spacing * yy.flatten()[:self.num_envs]
             self.env_origins[:, 2] = 0.
             
-    def _get_task_goals(self):
-        """ Get goals of each environment.
-            Same routine as self._get_env_origins
-        """
-        if self.cfg.terrain.mesh_type in ["heightfield", "trimesh"]:
-            self.custom_origins = True
-            self.task_goals = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
+    # def _get_task_goals(self):
+    #     """ Get goals of each environment.
+    #         Same routine as self._get_env_origins
+    #     """
+    #     if self.cfg.terrain.mesh_type in ["heightfield", "trimesh"]:
+    #         self.custom_origins = True
+    #         self.task_goals = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
             
-            self.terrain_levels = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').reshape(self.cfg.terrain.num_rows,self.cfg.terrain.num_cols).T.reshape(-1).to(torch.long)
+    #         self.terrain_levels = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').reshape(self.cfg.terrain.num_rows,self.cfg.terrain.num_cols).T.reshape(-1).to(torch.long)
             
-            self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
-            self.max_terrain_level = self.cfg.terrain.num_rows
-            self.terrain_goals = torch.from_numpy(self.terrain.env_goals).to(self.device).to(torch.float)
-            self.task_goals[:,:2] = self.terrain_goals[self.terrain_levels, self.terrain_types][:,:2]
-        else:
-            raise NotImplementedError("Task goals are not implemented for terrain type = "+self.cfg.terrain.mesh_type)
+    #         self.terrain_types = torch.div(torch.arange(self.num_envs, device=self.device), (self.num_envs/self.cfg.terrain.num_cols), rounding_mode='floor').to(torch.long)
+    #         self.max_terrain_level = self.cfg.terrain.num_rows
+    #         self.terrain_goals = torch.from_numpy(self.terrain.env_goals).to(self.device).to(torch.float)
+    #         self.task_goals[:,:2] = self.terrain_goals[self.terrain_levels, self.terrain_types][:,:2]
+    #     else:
+    #         raise NotImplementedError("Task goals are not implemented for terrain type = "+self.cfg.terrain.mesh_type)
  
     def _parse_cfg(self, cfg):
         self.dt = self.cfg.control.decimation * self.sim_params.dt
