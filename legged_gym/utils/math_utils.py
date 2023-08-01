@@ -76,7 +76,7 @@ def coordinate_transform(new_origin_in_old, target_point_in_old):
     sin_ = torch.sin(dtheta)
     transform_matrix = torch.Tensor([
         [cos_, sin_, -cos_*dx-sin_*dy],
-        [sin_, -cos_, cos_*dy-sin_*dx]
+        [-sin_, cos_, sin_*dx-cos_*dy],
         [0.0, 0.0, 1.0]
         ])
     _target_point_in_old = torch.Tensor([target_point_in_old[0], target_point_in_old[1], 1.0])

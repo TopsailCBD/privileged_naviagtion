@@ -38,8 +38,9 @@ class A1NavigationCfg( LeggedRobotCfg ):
         mode = 'train'
         num_envs = 4096
         include_history_steps = None  # Number of steps of history to include.
-        num_observations = 136
-        num_privileged_obs = 136
+        num_observations = 127
+        num_privileged_obs = 127
+        num_actions = 3
         reference_state_initialization = False
         reference_state_initialization_prob = 0.85
 
@@ -187,7 +188,7 @@ class A1NavigationCfg( LeggedRobotCfg ):
     class rewards( LeggedRobotCfg.rewards ):
         soft_dof_pos_limit = 0.9
         base_height_target = 0.25
-        class scales( LeggedRobotCfg.rewards.scales ):
+        # class scales( LeggedRobotCfg.rewards.scales ):
             # termination = 0.0
             # tracking_lin_vel = 1.5 * 1. / (.005 * 6)
             # tracking_ang_vel = 0.5 * 1. / (.005 * 6)
@@ -205,22 +206,25 @@ class A1NavigationCfg( LeggedRobotCfg ):
             # stand_still = 0.0
             # dof_pos_limits = 0.0
 
-            # termination = -0.0
-            tracking_lin_vel = 1.0
-            tracking_ang_vel = 0.5
-            lin_vel_z = 0#-2.0
-            ang_vel_xy = 0#-0.05
-            orientation = 0#-2.0
-            torques = -0.0001
-            dof_vel = -0.
-            dof_acc = -2.5e-7
-            base_height = -0.
-            feet_air_time =  1.0
-            collision = -0.1
-            feet_stumble = -0.0
-            action_rate = -0.01
-            # dof_pos_dif = -0.1
-            # stand_still = -0.
+            # # termination = -0.0
+            # tracking_lin_vel = 1.0
+            # tracking_ang_vel = 0.5
+            # lin_vel_z = 0#-2.0
+            # ang_vel_xy = 0#-0.05
+            # orientation = 0#-2.0
+            # torques = -0.0001
+            # dof_vel = -0.
+            # dof_acc = -2.5e-7
+            # base_height = -0.
+            # feet_air_time =  1.0
+            # collision = -0.1
+            # feet_stumble = -0.0
+            # action_rate = -0.01
+            # # dof_pos_dif = -0.1
+            # # stand_still = -0.
+            
+        class scales:
+            behaviour_cloning = 1.0
 
     class task:
         class ranges:

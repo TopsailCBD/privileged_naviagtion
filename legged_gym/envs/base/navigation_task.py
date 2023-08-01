@@ -81,8 +81,10 @@ class NavigationTask(BaseTask):
         self.debug_viz = False
         self.init_done = False
         self._parse_cfg(self.cfg)
+        
         super().__init__(self.cfg, sim_params, physics_engine, sim_device, headless)
-
+        self.num_locomotion_actions = self.cfg.locomotion.num_actions
+        
         if not self.headless:
             self.set_camera(self.cfg.viewer.pos, self.cfg.viewer.lookat)
         self._init_locomotion_model()
@@ -110,19 +112,21 @@ class NavigationTask(BaseTask):
         call self.post_physics_step()
 
         Args:
-            actions (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
+            commands (torch.Tensor): Tensor of shape (num_envs, num_actions_per_env)
+            Here, commands are actions in navigation RL model.
         """
         # Navigation Task: actions is speed command
         self.commands = commands
-        # Calculate speed actions from commands
-        actions = self.pre_physics_step()
         
-        clip_actions = self.cfg.normalization.clip_actions
-        self.actions = torch.clip(actions, -clip_actions, clip_actions).to(self.device)
+        # Calculate speed actions from commands
+        self.pre_physics_step()
+        
+        clip_locomotion_actions = self.cfg.normalization.clip_actions
+        self.locomotion_actions = torch.clip(self.locomotion_actions, -clip_locomotion_actions, clip_locomotion_actions).to(self.device)
         # step physics and render each frame
         self.render()
         for _ in range(self.cfg.control.decimation):
-            self.torques = self._compute_torques(self.actions).view(self.torques.shape)
+            self.torques = self._compute_torques(self.locomotion_actions).view(self.torques.shape)
             self.gym.set_dof_actuation_force_tensor(self.sim, gymtorch.unwrap_tensor(self.torques))
             self.gym.simulate(self.sim)
             if self.device == 'cpu':
@@ -161,9 +165,10 @@ class NavigationTask(BaseTask):
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
         
         self.compute_locomotion_observations()
-        actions = self.locomotion_policy(self.locomotion_obs_buf)
+        # print(self.locomotion_obs_buf.shape)
+        self.locomotion_actions[:] = self.locomotion_policy(self.locomotion_obs_buf)[:]
         
-        return actions
+        # return actions
     
     def compute_locomotion_observations(self):
         self.locomotion_obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
@@ -172,7 +177,7 @@ class NavigationTask(BaseTask):
                                     self.commands[:, :3] * self.commands_scale,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                                     self.dof_vel * self.obs_scales.dof_vel,
-                                    self.actions
+                                    self.locomotion_actions
                                     ),dim=-1)
         
     def post_physics_step(self):
@@ -204,6 +209,7 @@ class NavigationTask(BaseTask):
         self.compute_observations() # in some cases a simulation step might be required to refresh some obs (for example body positions)
         
         self.last_actions[:] = self.actions[:]
+        self.last_locomotion_actions[:] = self.locomotion_actions[:]
         self.last_dof_pos[:] = self.dof_pos[:]
         self.last_dof_vel[:] = self.dof_vel[:]
         self.last_root_vel[:] = self.root_states[:, 7:13]
@@ -261,6 +267,7 @@ class NavigationTask(BaseTask):
 
         # reset buffers
         self.last_actions[env_ids] = 0.
+        self.last_locomotion_actions[env_ids] = 0.
         self.last_dof_pos[env_ids] = 0
         self.last_dof_vel[env_ids] = 0.
         self.feet_air_time[env_ids] = 0.
@@ -360,7 +367,7 @@ class NavigationTask(BaseTask):
     def update_navigation_landmarks(self):
         """ Update navigation landmarks if the robot has reached next landmark.
         """
-        print("Update navigation landmarks...")
+        # print("Update navigation landmarks...")
         for i in range(self.num_envs):
             base_pos = self.root_states[i, :3].cpu().numpy()
             next_landmark = self.task_next_landmarks[i,:].cpu().numpy()
@@ -961,11 +968,13 @@ class NavigationTask(BaseTask):
         self.noise_scale_vec = self._get_noise_scale_vec(self.cfg)
         self.gravity_vec = to_torch(get_axis_params(-1., self.up_axis_idx), device=self.device).repeat((self.num_envs, 1))
         self.forward_vec = to_torch([1., 0., 0.], device=self.device).repeat((self.num_envs, 1))
-        self.torques = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
-        self.p_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
-        self.d_gains = torch.zeros(self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.torques = torch.zeros(self.num_envs, self.num_locomotion_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.p_gains = torch.zeros(self.num_locomotion_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.d_gains = torch.zeros(self.num_locomotion_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_actions = torch.zeros(self.num_envs, self.num_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.locomotion_actions = torch.zeros(self.num_envs, self.num_locomotion_actions, dtype=torch.float, device=self.device, requires_grad=False)
+        self.last_locomotion_actions = torch.zeros(self.num_envs, self.num_locomotion_actions, dtype=torch.float, device=self.device, requires_grad=False)
         self.last_dof_pos = torch.zeros_like(self.dof_pos)
         self.last_dof_vel = torch.zeros_like(self.dof_vel)
         self.last_root_vel = torch.zeros_like(self.root_states[:, 7:13])
@@ -1167,6 +1176,7 @@ class NavigationTask(BaseTask):
         
         # initialize variants for giving a privileged navigation
         self.task_startings = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
+        self.task_goals = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
         self.teacher_commands = torch.zeros(self.num_envs, 3, dtype=torch.float, device=self.device, requires_grad=False)
         self.task_next_landmarks = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
 
@@ -1202,8 +1212,7 @@ class NavigationTask(BaseTask):
             self.envs.append(env_handle)
             self.actor_handles.append(anymal_handle)
             
-            print('Origin at',self.env_origins[i].cpu().numpy(),
-                  'pos is',start_pose.p)
+            # print('Origin at',self.env_origins[i].cpu().numpy(),'pos is',start_pose.p)
         
         # print('Searching inferencal navigation path...')
         # self.get_navigation_path()
@@ -1211,7 +1220,17 @@ class NavigationTask(BaseTask):
         self.navigation_path = {}
         self._resample_startings(range(self.num_envs))
         self._resample_goals(range(self.num_envs))
-
+        
+        if self.cfg.task == 'play':
+            for i in range(self.num_envs):
+                if i != 0:
+                    continue
+                for landmark in self.navigation_path[i]:
+                    pos_at_landmark = np.array([landmark[0], landmark[1], 0.0])
+                    start_pose = gymapi.Transform()
+                    start_pose.p = gymapi.Vec3(*pos_at_landmark)
+                    anymal_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, "anymal", i, self.cfg.asset.self_collisions, 0)
+                
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):
             self.feet_indices[i] = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actor_handles[0], feet_names[i])
@@ -1383,103 +1402,110 @@ class NavigationTask(BaseTask):
     
     #------------ reward functions----------------
     
-    def _reward_behaviour(self):
-        return torch.sqrt(self.commands - self.teacher_commands, dim = 1)
+    def _reward_behaviour_cloning(self):
+        # Penalize commands different from teacher_commands
+        # command size: (num_envs, 3)
+        return -torch.mean(
+            torch.sqrt(
+                torch.sum(
+                    torch.pow(self.commands - self.teacher_commands,2.0),
+                    dim=1)),
+            dim=0)
     
     # def _reward_success(self):
-        # return torch.sqrt(self.cur_pos - self.task_goals, dim = 1) < epsilon
+        # return torch.square(self.cur_pos - self.task_goals, dim = 1) < epsilon
     
-    def _reward_lin_vel_z(self):
-        # Penalize z axis base linear velocity
-        return torch.square(self.base_lin_vel[:, 2])
+    # def _reward_lin_vel_z(self):
+    #     # Penalize z axis base linear velocity
+    #     return torch.square(self.base_lin_vel[:, 2])
     
-    def _reward_ang_vel_xy(self):
-        # Penalize xy axes base angular velocity
-        return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
+    # def _reward_ang_vel_xy(self):
+    #     # Penalize xy axes base angular velocity
+    #     return torch.sum(torch.square(self.base_ang_vel[:, :2]), dim=1)
     
-    def _reward_orientation(self):
-        # Penalize non flat base orientation
-        return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
+    # def _reward_orientation(self):
+    #     # Penalize non flat base orientation
+    #     return torch.sum(torch.square(self.projected_gravity[:, :2]), dim=1)
 
-    def _reward_base_height(self):
-        # Penalize base height away from target
-        base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
-        return torch.square(base_height - self.cfg.rewards.base_height_target)
+    # def _reward_base_height(self):
+    #     # Penalize base height away from target
+    #     base_height = torch.mean(self.root_states[:, 2].unsqueeze(1) - self.measured_heights, dim=1)
+    #     return torch.square(base_height - self.cfg.rewards.base_height_target)
     
-    def _reward_torques(self):
-        # Penalize torques
-        return torch.sum(torch.square(self.torques), dim=1)
+    # def _reward_torques(self):
+    #     # Penalize torques
+    #     return torch.sum(torch.square(self.torques), dim=1)
 
-    def _reward_dof_vel(self):
-        # Penalize dof velocities
-        return torch.sum(torch.square(self.dof_vel), dim=1)
+    # def _reward_dof_vel(self):
+    #     # Penalize dof velocities
+    #     return torch.sum(torch.square(self.dof_vel), dim=1)
     
-    def _reward_dof_acc(self):
-        # Penalize dof accelerations
-        return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
+    # def _reward_dof_acc(self):
+    #     # Penalize dof accelerations
+    #     return torch.sum(torch.square((self.last_dof_vel - self.dof_vel) / self.dt), dim=1)
 
-    def _reward_dof_pos_dif(self):
-        return torch.sum(torch.square(self.last_dof_pos - self.dof_pos), dim=1)
+    # def _reward_dof_pos_dif(self):
+    #     return torch.sum(torch.square(self.last_dof_pos - self.dof_pos), dim=1)
     
-    def _reward_action_rate(self):
-        # Penalize changes in actions
-        return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
+    # def _reward_action_rate(self):
+    #     # Penalize changes in actions
+    #     return torch.sum(torch.square(self.last_actions - self.actions), dim=1)
     
-    def _reward_collision(self):
-        # Penalize collisions on selected bodies
-        return torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1)
+    # def _reward_collision(self):
+    #     # Penalize collisions on selected bodies
+    #     return torch.sum(1.*(torch.norm(self.contact_forces[:, self.penalised_contact_indices, :], dim=-1) > 0.1), dim=1)
     
-    def _reward_termination(self):
-        # Terminal reward / penalty
-        return self.reset_buf * ~self.time_out_buf
+    # def _reward_termination(self):
+    #     # Terminal reward / penalty
+    #     return self.reset_buf * ~self.time_out_buf
     
-    def _reward_dof_pos_limits(self):
-        # Penalize dof positions too close to the limit
-        out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.) # lower limit
-        out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
-        return torch.sum(out_of_limits, dim=1)
+    # def _reward_dof_pos_limits(self):
+    #     # Penalize dof positions too close to the limit
+    #     out_of_limits = -(self.dof_pos - self.dof_pos_limits[:, 0]).clip(max=0.) # lower limit
+    #     out_of_limits += (self.dof_pos - self.dof_pos_limits[:, 1]).clip(min=0.)
+    #     return torch.sum(out_of_limits, dim=1)
 
-    def _reward_dof_vel_limits(self):
-        # Penalize dof velocities too close to the limit
-        # clip to max error = 1 rad/s per joint to avoid huge penalties
-        return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.cfg.rewards.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
+    # def _reward_dof_vel_limits(self):
+    #     # Penalize dof velocities too close to the limit
+    #     # clip to max error = 1 rad/s per joint to avoid huge penalties
+    #     return torch.sum((torch.abs(self.dof_vel) - self.dof_vel_limits*self.cfg.rewards.soft_dof_vel_limit).clip(min=0., max=1.), dim=1)
 
-    def _reward_torque_limits(self):
-        # penalize torques too close to the limit
-        return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit).clip(min=0.), dim=1)
+    # def _reward_torque_limits(self):
+    #     # penalize torques too close to the limit
+    #     return torch.sum((torch.abs(self.torques) - self.torque_limits*self.cfg.rewards.soft_torque_limit).clip(min=0.), dim=1)
 
-    def _reward_tracking_lin_vel(self):
-        # Tracking of linear velocity commands (xy axes)
-        lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
-        return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
+    # def _reward_tracking_lin_vel(self):
+    #     # Tracking of linear velocity commands (xy axes)
+    #     lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
+    #     return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
     
-    def _reward_tracking_ang_vel(self):
-        # Tracking of angular velocity commands (yaw) 
-        ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
-        return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
+    # def _reward_tracking_ang_vel(self):
+    #     # Tracking of angular velocity commands (yaw) 
+    #     ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
+    #     return torch.exp(-ang_vel_error/self.cfg.rewards.tracking_sigma)
 
-    def _reward_feet_air_time(self):
-        # Reward long steps
-        # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
-        contact = self.contact_forces[:, self.feet_indices, 2] > 1.
-        contact_filt = torch.logical_or(contact, self.last_contacts) 
-        self.last_contacts = contact
-        first_contact = (self.feet_air_time > 0.) * contact_filt
-        self.feet_air_time += self.dt
-        rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
-        rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
-        self.feet_air_time *= ~contact_filt
-        return rew_airTime
+    # def _reward_feet_air_time(self):
+    #     # Reward long steps
+    #     # Need to filter the contacts because the contact reporting of PhysX is unreliable on meshes
+    #     contact = self.contact_forces[:, self.feet_indices, 2] > 1.
+    #     contact_filt = torch.logical_or(contact, self.last_contacts) 
+    #     self.last_contacts = contact
+    #     first_contact = (self.feet_air_time > 0.) * contact_filt
+    #     self.feet_air_time += self.dt
+    #     rew_airTime = torch.sum((self.feet_air_time - 0.5) * first_contact, dim=1) # reward only on first contact with the ground
+    #     rew_airTime *= torch.norm(self.commands[:, :2], dim=1) > 0.1 #no reward for zero command
+    #     self.feet_air_time *= ~contact_filt
+    #     return rew_airTime
     
-    def _reward_stumble(self):
-        # Penalize feet hitting vertical surfaces
-        return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
-             5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1)
+    # def _reward_stumble(self):
+    #     # Penalize feet hitting vertical surfaces
+    #     return torch.any(torch.norm(self.contact_forces[:, self.feet_indices, :2], dim=2) >\
+    #          5 *torch.abs(self.contact_forces[:, self.feet_indices, 2]), dim=1)
         
-    def _reward_stand_still(self):
-        # Penalize motion at zero commands
-        return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
+    # def _reward_stand_still(self):
+    #     # Penalize motion at zero commands
+    #     return torch.sum(torch.abs(self.dof_pos - self.default_dof_pos), dim=1) * (torch.norm(self.commands[:, :2], dim=1) < 0.1)
 
-    def _reward_feet_contact_forces(self):
-        # penalize high contact forces
-        return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
+    # def _reward_feet_contact_forces(self):
+    #     # penalize high contact forces
+    #     return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
