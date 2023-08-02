@@ -48,8 +48,8 @@ def play(args):
     env_cfg, train_cfg = task_registry.get_cfgs(name=args.task)
     
     # override some parameters for testing
-    env_cfg.env.mode = 'play'
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 16)
+    env_cfg.env.mode = 'train'
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 160)
     env_cfg.terrain.num_rows = 4
     env_cfg.terrain.num_cols = 4
     env_cfg.terrain.curriculum = False
@@ -167,7 +167,7 @@ if __name__ == '__main__':
     EXPORT_POLICY = True
     RECORD_FRAMES = False
     MOVE_CAMERA = False
-    RESET_BY_STEP = 100
+    RESET_BY_STEP = 0
     args = get_args()
     args.rl_device = args.sim_device
     play(args)

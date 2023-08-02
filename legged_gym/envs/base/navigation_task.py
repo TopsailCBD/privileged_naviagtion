@@ -582,7 +582,7 @@ class NavigationTask(BaseTask):
         # self.commands[env_ids, :2] *= (torch.norm(self.commands[env_ids, :2], dim=1) > 0.2).unsqueeze(1)
 
     def _resample_startings(self, env_ids):
-        """ Randommly select startings of some environments
+        """ Randommly select startings of some environments, scale: m
         
         Args:
             env_ids (List[int]): Environments ids for which new commands are needed
@@ -617,23 +617,7 @@ class NavigationTask(BaseTask):
         Args:
             env_id (int): ID of environment to be checked.
         """
-        i = env_id // self.cfg.terrain.num_rows
-        j = env_id % self.cfg.terrain.num_cols
-        
-        length_box = 5
-        width_box = 5
-        
-        # Check obstacle close to the starting. Scale: pixels
-        center_x = int(self.task_startings[env_id, 0].item() / self.cfg.terrain.horizontal_scale)
-        center_y = int(self.task_startings[env_id, 1].item() / self.cfg.terrain.horizontal_scale)
-        
-        # map coordinate system
-        start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
-        end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
-        start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
-        end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
-        
-        # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
+        start_x, end_x, start_y, end_y = self.meter_to_index(self.task_startings[env_id],self.cfg.terrain.robot_collision_box)
         
         if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
             print(f"In checking starting of env {env_id}, starting is in obstacles.")
@@ -642,9 +626,8 @@ class NavigationTask(BaseTask):
             print(f"Set a valid starting of env {env_id} at {self.task_startings[env_id]}.")
             return True
         
-        
     def _resample_goals(self, env_ids):
-        """ Randommly select goals of some environments
+        """ Randommly select goals of some environments, scale: m
             In practice, we sample a goal and take the distance between the goal and the starting as the command.
         """
         
@@ -673,35 +656,16 @@ class NavigationTask(BaseTask):
         Args:
             env_id (int): ID of environment to be checked.
         """
-        i = env_id // self.cfg.terrain.num_rows
-        j = env_id % self.cfg.terrain.num_cols
+        # Check obstacle around
+        start_x, end_x, start_y, end_y = self.meter_to_index(self.task_goals[env_id],self.cfg.terrain.robot_collision_box)
         
-        length_box = 5
-        width_box = 5
-        
-        center_x = int(self.task_goals[env_id, 0].item() / self.cfg.terrain.horizontal_scale)
-        center_y = int(self.task_goals[env_id, 1].item() / self.cfg.terrain.horizontal_scale)
-        
-        # map coordinate system
-        start_x = center_x-length_box + i * self.terrain.length_per_env_pixels
-        end_x = center_x+length_box + i * self.terrain.length_per_env_pixels
-        start_y = center_y-width_box + j * self.terrain.width_per_env_pixels
-        end_y = center_y+width_box +  j * self.terrain.width_per_env_pixels
-        
-        # self.terrain.height_field_raw[start_x:end_x, start_y:end_y] = 5.
-        try:
-            if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
-                print(f"In checking goal of env {env_id}, goal is in obstacles.")
-                return False
-        except:
-            print(f"Error occurs in checking goal of env {env_id}. Goal invaild at {self.task_goals[env_id]}.")
+        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
+            print(f"In checking goal of env {env_id}, goal is in obstacles.")
+            return False
+
         # Check if there is a path from starting to goal
-        
-        _scale = self.cfg.terrain.horizontal_scale
-        x0 = int(self.task_startings[env_id, 0].item()/_scale)
-        y0 = int(self.task_startings[env_id, 1].item()/_scale)
-        xn = int(self.task_goals[env_id, 0].item()/_scale)
-        yn = int(self.task_goals[env_id, 1].item()/_scale)
+        x0, y0 = self.meter_to_index(self.task_startings[env_id])
+        xn, yn = self.meter_to_index(self.task_goals[env_id])
         
         pathfound = MazeSolver(self.terrain.height_field_raw).astar((x0,y0), (xn,yn))
         
@@ -718,6 +682,28 @@ class NavigationTask(BaseTask):
             self.navigation_path[env_id] = torch.Tensor([[p[0],p[1]] for p in pathfound])
             print(f"Set a valid goal of env {env_id} at {self.task_goals[env_id]}, have a path of length {len(pathfound)}.")
             return True
+        
+    def meter_to_index(self, meter_coordinate, area=None):
+        """ Transfer meter representation to index in height_field_raw.
+        """
+        x = meter_coordinate[0]
+        y = meter_coordinate[1]
+        
+        border_idx = int(self.cfg.terrain.border_size / self.cfg.terrain.horizontal_scale)
+        x_idx = border_idx + int(x / self.cfg.terrain.horizontal_scale)
+        y_idx = border_idx + int(x / self.cfg.terrain.horizontal_scale)
+        
+        if area is None:
+            return x_idx, y_idx
+        elif isinstance(area, int):
+            area_incre = int(area / self.cfg.terrain.horizontal_scale)
+            return x_idx - area_incre, x_idx + area_incre, y_idx - area_incre, y_idx + area_incre
+        elif isinstance(area, tuple) or isinstance(area, list):
+            area_incre_x = int(area[0] / self.cfg.terrain.horizontal_scale)
+            area_incre_y = int(area[1] / self.cfg.terrain.horizontal_scale)
+            return x_idx - area_incre_x, x_idx + area_incre_x, y_idx - area_incre_y, y_idx + area_incre_y
+        else:
+            raise NotImplementedError
     
     def _compute_torques(self, actions):
         """ Compute torques from actions.
@@ -1221,15 +1207,13 @@ class NavigationTask(BaseTask):
         self._resample_startings(range(self.num_envs))
         self._resample_goals(range(self.num_envs))
         
-        if self.cfg.task == 'play':
-            for i in range(self.num_envs):
-                if i != 0:
-                    continue
-                for landmark in self.navigation_path[i]:
-                    pos_at_landmark = np.array([landmark[0], landmark[1], 0.0])
-                    start_pose = gymapi.Transform()
-                    start_pose.p = gymapi.Vec3(*pos_at_landmark)
-                    anymal_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, "anymal", i, self.cfg.asset.self_collisions, 0)
+        # if self.cfg.env.mode == 'play':
+        #     for i in range(self.num_envs):
+        #         for landmark in self.navigation_path[i]:
+        #             pos_at_landmark = np.array([landmark[0], landmark[1], 0.0])
+        #             start_pose = gymapi.Transform()
+        #             start_pose.p = gymapi.Vec3(*pos_at_landmark)
+        #             anymal_handle = self.gym.create_actor(env_handle, robot_asset, start_pose, "anymal", i, self.cfg.asset.self_collisions, 0)
                 
         self.feet_indices = torch.zeros(len(feet_names), dtype=torch.long, device=self.device, requires_grad=False)
         for i in range(len(feet_names)):

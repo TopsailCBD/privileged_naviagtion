@@ -65,6 +65,8 @@ class A1NavigationCfg( LeggedRobotCfg ):
         
         terrain_proportions = [0.0, 0.0, 0.0, 0.0, 1.0]
         
+        robot_collision_box = (0.3,0.3)
+        
     class init_state( LeggedRobotCfg.init_state ):
         pos = [0,0,0.42]# [0.0, 0.0, 0.42] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
