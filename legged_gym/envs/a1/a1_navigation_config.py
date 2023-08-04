@@ -36,7 +36,7 @@ MOTION_FILES = glob.glob('datasets/mocap_motions/*')
 class A1NavigationCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         mode = 'train'
-        num_envs = 4096
+        num_envs = 128 # 4096
         include_history_steps = None  # Number of steps of history to include.
         num_observations = 127
         num_privileged_obs = 127
@@ -49,6 +49,7 @@ class A1NavigationCfg( LeggedRobotCfg ):
         num_privileged_obs = None
         num_observations = 48 # amp
         num_actions = 12
+        experiment_name = "a1_amp_example"
         load_run = 'Jul04_10-43-17_plane_collect_rate_reward'
         checkpoint = 2000
         time_per_step = 0.02
@@ -65,10 +66,8 @@ class A1NavigationCfg( LeggedRobotCfg ):
         
         terrain_proportions = [0.0, 0.0, 0.0, 0.0, 1.0]
         
-        robot_collision_box = (0.3,0.3)
-        
     class init_state( LeggedRobotCfg.init_state ):
-        pos = [0,0,0.42]# [0.0, 0.0, 0.42] # x,y,z [m]
+        pos = [0,0,0.35]# [0.0, 0.0, 0.42] # x,y,z [m]
         default_joint_angles = { # = target angles [rad] when action = 0.0
             #raw pos
             # 'FL_hip_joint': 0.0,  # [rad]
@@ -232,14 +231,15 @@ class A1NavigationCfg( LeggedRobotCfg ):
         class ranges:
             # Scale: m
             # From env center to starting point
-            starting_x = [-2, 2]
-            starting_y = [-2, 2]
+            starting_x = [-3, 3]
+            starting_y = [-3, 3]
             # Heading on starting point
-            starting_yaw = [-3.14, 3.14]
+            starting_yaw = [-3.1415, 3.1415]
             # From env center to goal
-            goal_x = [-2, 2]
-            goal_y = [-2, 2]
-        
+            goal_x = [-3, 3]
+            goal_y = [-3, 3]
+            
+        robot_collision_box = (0.5,0.5)
         min_path_length = 5 # Scale: pixels
     
     class commands:
@@ -267,27 +267,43 @@ class A1NavigationCfg( LeggedRobotCfg ):
             ang_vel_yaw = [-0.4, -0.3,-0.2, -0.1, 0, 0.1, 0.2, 0.3, 0.4]
 
 class A1NavigationCfgPPO( LeggedRobotCfgPPO ):
-    runner_class_name = 'AMPOnPolicyRunner'
-    class algorithm( LeggedRobotCfgPPO.algorithm ):
+    runner_class_name = 'OnPolicyRunner'
+    
+    class policy:
+        init_noise_std = 1.0
+        actor_hidden_dims = [512, 256, 128]
+        critic_hidden_dims = [512, 256, 128]
+        activation = 'elu' # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
+        
+    class algorithm:
+        # training params
+        value_loss_coef = 1.0
+        use_clipped_value_loss = True
+        clip_param = 0.2
         entropy_coef = 0.01
-        amp_replay_buffer_size = 1000000
         num_learning_epochs = 5
-        num_mini_batches = 4
+        num_mini_batches = 4 # mini batch size = num_envs*nsteps / nminibatches
+        learning_rate = 1.e-3 #5.e-4
+        schedule = 'adaptive' # could be adaptive, fixed
+        gamma = 0.99
+        lam = 0.95
+        desired_kl = 0.01
+        max_grad_norm = 1.
 
     class runner( LeggedRobotCfgPPO.runner ):
-        run_name = 'plane_collect_rate_reward'
-        experiment_name = 'a1_amp_example'
-        algorithm_class_name = 'AMPPPO'
+
+        # logging
+        save_interval = 200 # check for potential saves every this many iterations
+        experiment_name = 'a1_navigation_test'
+        run_name = 'ppo'
+        
+        # load and resume
+        resume = False
+        load_run = -1 # -1 = last run
+        checkpoint = -1 # -1 = last saved model
+        resume_path = None # updated from load_run and chkpt
+        
         policy_class_name = 'ActorCritic'
-        max_iterations = 20000 # number of policy updates
-
-        # amp_reward_coef = 2.0
-        amp_reward_coef = 0.5 * 0.02
-        amp_motion_files = MOTION_FILES
-        amp_num_preload_transitions = 2000000
-        amp_task_reward_lerp = 0.3
-        amp_discr_hidden_dims = [1024, 512]
-
-        min_normalized_std = [0.05, 0.02, 0.05] * 4
-
-  
+        algorithm_class_name = 'PPO'
+        num_steps_per_env = 24 # per iteration
+        max_iterations = 10000 # number of policy updates

@@ -445,7 +445,7 @@ class NavigationTask(BaseTask):
         train_cfg_dict = class_to_dict(self.train_cfg)
         # load previously trained model
         resume_path = get_load_path(
-                                    root=os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', self.train_cfg.runner.experiment_name), 
+                                    root=os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', self.cfg.locomotion.experiment_name), 
                                     load_run=self.train_cfg.runner.load_run, 
                                     checkpoint=self.train_cfg.runner.checkpoint
                                     )
@@ -617,9 +617,9 @@ class NavigationTask(BaseTask):
         Args:
             env_id (int): ID of environment to be checked.
         """
-        start_x, end_x, start_y, end_y = self.meter_to_index(self.task_startings[env_id],self.cfg.terrain.robot_collision_box)
+        start_x, end_x, start_y, end_y = self.meter_to_index(self.task_startings[env_id],self.cfg.task.robot_collision_box)
         
-        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
+        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y: end_y]) > 0:
             print(f"In checking starting of env {env_id}, starting is in obstacles.")
             return False
         else:
@@ -657,9 +657,9 @@ class NavigationTask(BaseTask):
             env_id (int): ID of environment to be checked.
         """
         # Check obstacle around
-        start_x, end_x, start_y, end_y = self.meter_to_index(self.task_goals[env_id],self.cfg.terrain.robot_collision_box)
+        start_x, end_x, start_y, end_y = self.meter_to_index(self.task_goals[env_id],self.cfg.task.robot_collision_box)
         
-        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y:end_y]) > 0.01:
+        if np.max(self.terrain.height_field_raw[start_x: end_x, start_y: end_y]) > 0:
             print(f"In checking goal of env {env_id}, goal is in obstacles.")
             return False
 
@@ -789,6 +789,11 @@ class NavigationTask(BaseTask):
             self._resample_startings(env_ids)
             self._resample_goals(env_ids)
             self.root_states[env_ids, :2] = self.task_startings[env_ids, :2]
+            self.root_states[env_ids, 3:7] = quat_from_euler_xyz(
+                torch.zeros(len(env_ids)).to(self.device),
+                torch.zeros(len(env_ids)).to(self.device),
+                self.task_startings[env_ids, 2],
+                )
         else:
             self.root_states[env_ids] = self.base_init_state
             self.root_states[env_ids, :3] += self.env_origins[env_ids]
@@ -1001,12 +1006,12 @@ class NavigationTask(BaseTask):
         p_mult = ((
             self.cfg.domain_rand.stiffness_multiplier_range[0] -
             self.cfg.domain_rand.stiffness_multiplier_range[1]) *
-            torch.rand(num_envs, self.num_actions, device=self.device) +
+            torch.rand(num_envs, self.num_locomotion_actions, device=self.device) +
             self.cfg.domain_rand.stiffness_multiplier_range[1]).float()
         d_mult = ((
             self.cfg.domain_rand.damping_multiplier_range[0] -
             self.cfg.domain_rand.damping_multiplier_range[1]) *
-            torch.rand(num_envs, self.num_actions, device=self.device) +
+            torch.rand(num_envs, self.num_locomotion_actions, device=self.device) +
             self.cfg.domain_rand.damping_multiplier_range[1]).float()
         
         return p_mult * self.p_gains, d_mult * self.d_gains
