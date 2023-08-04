@@ -602,10 +602,10 @@ class NavigationTask(BaseTask):
         
         
         # Check if new startings are valid
-        env_ids_to_resample = []
-        for env_id in env_ids:
-            if not self._is_valid_starting(env_id):
-                env_ids_to_resample.append(env_id)
+        valid_starting_mask = map(self._is_valid_starting, env_ids)
+        env_ids_to_resample = filter(lambda x: not x[1], zip(env_ids, valid_starting_mask))
+        env_ids_to_resample = [x[0] for x in env_ids_to_resample]
+        
         
         # If not vaild, regenerate a starting
         self._resample_startings(env_ids_to_resample)
@@ -620,10 +620,12 @@ class NavigationTask(BaseTask):
         start_x, end_x, start_y, end_y = self.meter_to_index(self.task_startings[env_id],self.cfg.task.robot_collision_box)
         
         if np.max(self.terrain.height_field_raw[start_x: end_x, start_y: end_y]) > 0:
-            print(f"In checking starting of env {env_id}, starting is in obstacles.")
+            if self.cfg.task.show_checking:
+                print(f"In checking starting of env {env_id}, starting is in obstacles.")
             return False
         else:
-            print(f"Set a valid starting of env {env_id} at {self.task_startings[env_id]}.")
+            if self.cfg.task.show_checking:
+                print(f"Set a valid starting of env {env_id} at {self.task_startings[env_id]}.")
             return True
         
     def _resample_goals(self, env_ids):
@@ -640,10 +642,9 @@ class NavigationTask(BaseTask):
         self.task_goals[env_ids, 0] = self.env_origins[env_ids, 0] + goal_incerment_x
         self.task_goals[env_ids, 1] = self.env_origins[env_ids, 1] + goal_incerment_y
         
-        env_ids_to_resample = []
-        for env_id in env_ids:
-            if not self._is_valid_goal(env_id):
-                env_ids_to_resample.append(env_id)
+        valid_goal_mask = map(self._is_valid_goal, env_ids)
+        env_ids_to_resample = filter(lambda x: not x[1], zip(env_ids, valid_goal_mask))
+        env_ids_to_resample = [x[0] for x in env_ids_to_resample]
         
         # If not vaild, regenerate a goal
         self._resample_goals(env_ids_to_resample)
@@ -660,7 +661,8 @@ class NavigationTask(BaseTask):
         start_x, end_x, start_y, end_y = self.meter_to_index(self.task_goals[env_id],self.cfg.task.robot_collision_box)
         
         if np.max(self.terrain.height_field_raw[start_x: end_x, start_y: end_y]) > 0:
-            print(f"In checking goal of env {env_id}, goal is in obstacles.")
+            if self.cfg.task.show_checking:
+                print(f"In checking goal of env {env_id}, goal is in obstacles.")
             return False
 
         # Check if there is a path from starting to goal
@@ -670,17 +672,20 @@ class NavigationTask(BaseTask):
         pathfound = MazeSolver(self.terrain.height_field_raw).astar((x0,y0), (xn,yn))
         
         if pathfound is None:
-            print(f"In checking goal of env {env_id}, no path found.")
+            if self.cfg.task.show_checking:
+                print(f"In checking goal of env {env_id}, no path found.")
             return False
         
         pathfound = list(pathfound)
         
         if len(pathfound) < self.cfg.task.min_path_length:
-            print(f"In checking goal of env {env_id}, too close goal.")
+            if self.cfg.task.show_checking:
+                print(f"In checking goal of env {env_id}, too close goal.")
             return False
         else:
             self.navigation_path[env_id] = torch.Tensor([[p[0],p[1]] for p in pathfound])
-            print(f"Set a valid goal of env {env_id} at {self.task_goals[env_id]}, have a path of length {len(pathfound)}.")
+            if self.cfg.task.show_checking:
+                print(f"Set a valid goal of env {env_id} at {self.task_goals[env_id]}, have a path of length {len(pathfound)}.")
             return True
         
     def meter_to_index(self, meter_coordinate, area=None):

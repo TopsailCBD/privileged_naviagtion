@@ -36,7 +36,7 @@ MOTION_FILES = glob.glob('datasets/mocap_motions/*')
 class A1NavigationCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         mode = 'train'
-        num_envs = 128 # 4096
+        num_envs = 4096
         include_history_steps = None  # Number of steps of history to include.
         num_observations = 127
         num_privileged_obs = 127
@@ -241,6 +241,7 @@ class A1NavigationCfg( LeggedRobotCfg ):
             
         robot_collision_box = (0.5,0.5)
         min_path_length = 5 # Scale: pixels
+        show_checking = False
     
     class commands:
         # curriculum = False
