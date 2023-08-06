@@ -227,6 +227,9 @@ class A1NavigationCfg( LeggedRobotCfg ):
         class scales:
             behaviour_cloning = 1.0
 
+    class normalization( LeggedRobotCfg.normalization ):
+        clip_actions = 0.6
+    
     class task:
         class ranges:
             # Scale: m
@@ -296,7 +299,7 @@ class A1NavigationCfgPPO( LeggedRobotCfgPPO ):
         # logging
         save_interval = 200 # check for potential saves every this many iterations
         experiment_name = 'a1_navigation_test'
-        run_name = 'ppo'
+        run_name = 'ppo_clip0.6'
         
         # load and resume
         resume = False
