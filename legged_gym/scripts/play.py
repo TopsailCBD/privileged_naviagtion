@@ -49,9 +49,9 @@ def play(args):
     
     # override some parameters for testing
     env_cfg.env.mode = 'train'
-    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 160)
-    env_cfg.terrain.num_rows = 4
-    env_cfg.terrain.num_cols = 4
+    env_cfg.env.num_envs = min(env_cfg.env.num_envs, 1)
+    env_cfg.terrain.num_rows = 1
+    env_cfg.terrain.num_cols = 1
     env_cfg.terrain.curriculum = False
     env_cfg.noise.add_noise = False
     env_cfg.domain_rand.randomize_friction = True
@@ -81,6 +81,10 @@ def play(args):
     # prepare environment
     env, _ = task_registry.make_env(name=args.task, args=args, env_cfg=env_cfg)
     _, _ = env.reset()
+    
+    print(env.task_startings, env.task_goals)
+    print(env.navigation_path)
+    
     obs = env.get_observations()
     # load policy
     train_cfg.runner.resume = True
@@ -88,7 +92,7 @@ def play(args):
     # train_cfg.runner.load_run = 'Jul01_16-56-15_plane_collect'
     # train_cfg.runner.load_run = 'Jul02_15-58-46_plane_collect_rate'
     # train_cfg.runner.load_run = 'Jul04_10-43-17_plane_collect_rate_reward'
-    train_cfg.runner.load_run = 'Aug04_11-46-56_ppo'
+    train_cfg.runner.load_run = 'Aug06_01-52-27_ppo_clip0.6'
     train_cfg.runner.checkpoint = 2000
     ppo_runner, train_cfg = task_registry.make_alg_runner(env=env, name=args.task, args=args, train_cfg=train_cfg)
     policy = ppo_runner.get_inference_policy(device=env.device)
@@ -117,7 +121,7 @@ def play(args):
 
         record_actions.append(actions)
 
-        obs, _, rews, dones, infos, _, _ = env.step(actions.detach())
+        obs, _, rews, dones, infos, _, _ = env.step(actions.detach(),teacher=TEST_TEACHER)
         if RECORD_FRAMES:
             if i % 2:
                 filename = os.path.join(LEGGED_GYM_ROOT_DIR, 'logs', train_cfg.runner.experiment_name, 'exported', 'frames', f"{img_idx}.png")
@@ -134,6 +138,10 @@ def play(args):
         if RESET_BY_STEP != 0:
             if i % RESET_BY_STEP == 0:
                 _,_ = env.reset()
+        
+        if i % 100 == 0:
+            print("Step",i,"command",actions,"recommended command", env.teacher_commands[robot_index].detach().cpu().numpy())        
+        
         if i < stop_state_log:
             logger.log_states(
                 {
@@ -169,6 +177,7 @@ if __name__ == '__main__':
     RECORD_FRAMES = False
     MOVE_CAMERA = False
     RESET_BY_STEP = 0
+    TEST_TEACHER = True
     args = get_args()
     args.rl_device = args.sim_device
     play(args)

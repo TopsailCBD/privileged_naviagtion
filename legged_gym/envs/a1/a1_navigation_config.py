@@ -36,7 +36,7 @@ MOTION_FILES = glob.glob('datasets/mocap_motions/*')
 class A1NavigationCfg( LeggedRobotCfg ):
     class env( LeggedRobotCfg.env ):
         mode = 'train'
-        num_envs = 4096
+        num_envs = 1 # 4096
         include_history_steps = None  # Number of steps of history to include.
         num_observations = 127
         num_privileged_obs = 127
@@ -299,7 +299,7 @@ class A1NavigationCfgPPO( LeggedRobotCfgPPO ):
         # logging
         save_interval = 200 # check for potential saves every this many iterations
         experiment_name = 'a1_navigation_test'
-        run_name = 'ppo_clip0.6'
+        run_name = 'ppo_debug'
         
         # load and resume
         resume = False

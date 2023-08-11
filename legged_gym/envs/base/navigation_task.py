@@ -41,8 +41,9 @@ from isaacgym.torch_utils import *
 from legged_gym import LEGGED_GYM_ROOT_DIR, envs
 from legged_gym.envs.base.base_task import BaseTask
 from legged_gym.utils.helpers import class_to_dict, get_load_path
-from legged_gym.utils.math_utils import (estimate_next_pose, quat_apply_yaw,
-                                         torch_rand_sqrt_float, wrap_to_pi, coordinate_transform)
+from legged_gym.utils.math_utils import (coordinate_transform,
+                                         estimate_next_pose, quat_apply_yaw,
+                                         torch_rand_sqrt_float, wrap_to_pi)
 from legged_gym.utils.maze_solver import MazeSolver
 from legged_gym.utils.task_registry import task_registry
 from legged_gym.utils.terrain import Terrain
@@ -106,7 +107,7 @@ class NavigationTask(BaseTask):
         return obs, privileged_obs
 
     # def step(self, actions)
-    def step(self, commands):
+    def step(self, commands, teacher=False):
         """ Calculate actions by command, apply actions, simulate, 
         call self.pre_physics_step()
         call self.post_physics_step()
@@ -119,10 +120,11 @@ class NavigationTask(BaseTask):
         self.commands = commands
         
         # Calculate speed actions from commands
-        self.pre_physics_step()
-        
+        self.pre_physics_step(teacher)
+
         clip_locomotion_actions = self.cfg.normalization.clip_actions
         self.locomotion_actions = torch.clip(self.locomotion_actions, -clip_locomotion_actions, clip_locomotion_actions).to(self.device)
+
         # step physics and render each frame
         self.render()
         for _ in range(self.cfg.control.decimation):
@@ -155,7 +157,7 @@ class NavigationTask(BaseTask):
             policy_obs = self.obs_buf
         return policy_obs
 
-    def pre_physics_step(self):
+    def pre_physics_step(self,teacher:bool=False):
         """ check commands and state, compute actions
         
         """
@@ -164,17 +166,22 @@ class NavigationTask(BaseTask):
         self.base_ang_vel[:] = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity[:] = quat_rotate_inverse(self.base_quat, self.gravity_vec)
         
-        self.compute_locomotion_observations()
+        self.compute_teacher_commands()
+        self.compute_locomotion_observations(teacher)
         # print(self.locomotion_obs_buf.shape)
         self.locomotion_actions[:] = self.locomotion_policy(self.locomotion_obs_buf)[:]
         
         # return actions
     
-    def compute_locomotion_observations(self):
+    def compute_locomotion_observations(self,teacher:bool=False):
+        if teacher:
+            commands = self.teacher_commands
+        else:
+            commands = self.commands
         self.locomotion_obs_buf = torch.cat((  self.base_lin_vel * self.obs_scales.lin_vel,
                                     self.base_ang_vel  * self.obs_scales.ang_vel,
                                     self.projected_gravity,
-                                    self.commands[:, :3] * self.commands_scale,
+                                    commands[:, :3] * self.commands_scale,
                                     (self.dof_pos - self.default_dof_pos) * self.obs_scales.dof_pos,
                                     self.dof_vel * self.obs_scales.dof_vel,
                                     self.locomotion_actions
@@ -368,6 +375,7 @@ class NavigationTask(BaseTask):
         """ Update navigation landmarks if the robot has reached next landmark.
         """
         # print("Update navigation landmarks...")
+        # Here the keys (env_id) are int, not scalar tensor.
         for i in range(self.num_envs):
             base_pos = self.root_states[i, :3].cpu().numpy()
             next_landmark = self.task_next_landmarks[i,:].cpu().numpy()
@@ -678,12 +686,19 @@ class NavigationTask(BaseTask):
         
         pathfound = list(pathfound)
         
+        # In self.reset(), env_ids is a tensor of size 0. The key of a dict is better to be an int anyway.
+        if type(env_id) == torch.Tensor:
+            if env_id.numel() == 1:
+                env_id = env_id.item()
+            else:
+                raise TypeError("env_id should be a scalar, but got", env_id, "with size",env_id.size())
+        
         if len(pathfound) < self.cfg.task.min_path_length:
             if self.cfg.task.show_checking:
                 print(f"In checking goal of env {env_id}, too close goal.")
             return False
         else:
-            self.navigation_path[env_id] = torch.Tensor([[p[0],p[1]] for p in pathfound])
+            self.navigation_path[env_id] = torch.Tensor([[p[0],p[1]] for p in pathfound])     
             if self.cfg.task.show_checking:
                 print(f"Set a valid goal of env {env_id} at {self.task_goals[env_id]}, have a path of length {len(pathfound)}.")
             return True
@@ -1006,6 +1021,12 @@ class NavigationTask(BaseTask):
 
         if self.cfg.domain_rand.randomize_gains:
             self.randomized_p_gains, self.randomized_d_gains = self.compute_randomized_gains(self.num_envs)
+            
+        self.command_pool = torch.Tensor(list(product(
+            self.cfg.commands.choices.lin_vel_x,
+            self.cfg.commands.choices.lin_vel_y,
+            self.cfg.commands.choices.ang_vel_yaw
+            )))
 
     def compute_randomized_gains(self, num_envs):
         p_mult = ((
@@ -1378,21 +1399,30 @@ class NavigationTask(BaseTask):
 
         return heights.view(self.num_envs, -1) * self.terrain.cfg.vertical_scale
 
-    def _compute_teacher_commands(self):
+    def compute_teacher_commands(self):
         """ Compute the best command to reach next landmark
         """
         for i in range(self.num_envs):
-            base_pos = (self.root_states[i, :3]).cpu().numpy()
-            command_list = product(
-                self.cfg.commands.choices.lin_vel_x,
-                self.cfg.commands.choices.lin_vel_y,
-                self.cfg.commands.choices.ang_vel_yaw
-                )
+            base_pos = (self.root_states[i, :3]).cpu()
             
-            time_per_step = self.cfg.locomotion.time_per_step
-            new_poses = map(lambda x: estimate_next_pose(base_pos, time_per_step, x), command_list)
+            new_poses_in_pixel = map(lambda x: self._estimate_next_pose(base_pos,x), self.command_pool)
+            distances_in_pixel = torch.norm(torch.stack(list(new_poses_in_pixel),dim=0).cpu() - self.task_next_landmarks[i].cpu(),dim=1)
+
+            randperm_indices = torch.randperm(self.command_pool.shape[0])
+            best_command_idx = torch.argmin(distances_in_pixel[randperm_indices])
+            best_command = torch.Tensor([*self.command_pool[randperm_indices][best_command_idx]])
+            print(i,best_command)            
+            self.teacher_commands[i,:3] = best_command[:]
             
-            self.teacher_commands[i,:3] = torch.tensor(min(new_poses, key=lambda x: torch.norm(x - self.task_next_landmarks[i,:3])).tolist(), device=self.device, requires_grad=False)
+    def _estimate_next_pose(self, base_pose, command):
+        """ Compute next pose in pixel as format torch.Tensor
+        
+        Calls estimate_next_pose() in utils.py
+        """
+        new_pose = estimate_next_pose(base_pose, self.cfg.locomotion.time_per_step, command)
+        new_pose_in_pixel = self.meter_to_index(new_pose)
+        return torch.Tensor([new_pose_in_pixel[0],new_pose_in_pixel[1]])
+        
     
     #------------ reward functions----------------
     
