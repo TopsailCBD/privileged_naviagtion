@@ -1,6 +1,4 @@
 datasets/
-logs/
-!logs/a1_amp_example/Jul04_10-43-17_plane_collect_rate_reward/events.*
-!logs/a1_amp_example/Jul04_10-43-17_plane_collect_rate_reward/model_2000.pt
+logs/*
 **/__pycache__
 *.pyc
